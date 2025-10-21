@@ -1,0 +1,13 @@
+[package]
+name = "dashcam_rs"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.100"
+chrono = "0.4.42"
+ctrlc = "3.5.0"
+gstreamer = "0.24.2"
+gstreamer-video = "0.24.2"
+thiserror = "2.0.17"
+tokio = "1.48.0"
