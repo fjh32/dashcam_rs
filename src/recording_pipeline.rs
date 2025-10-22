@@ -5,6 +5,7 @@ use gstreamer as gst;
 use gstreamer::prelude::*;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+
 /////////////////////// Traits ////////////////////////
 pub trait PipelineSource: Send {
     fn setup_source(&mut self, pipeline: &gst::Pipeline) -> Result<()>;
@@ -17,6 +18,7 @@ pub trait PipelineSink: Send {
     fn get_sink_pad(&self) -> Result<gst::Pad>;
     fn get_sink_element(&self) -> Result<gst::Element>;
 }
+
 ////////////////////////////////////////////////////////////
 #[derive(Clone)]
 pub struct RecordingConfig {

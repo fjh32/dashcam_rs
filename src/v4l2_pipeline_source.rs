@@ -1,8 +1,10 @@
+use std::{fs, thread, time::Duration};
+
 #[allow(dead_code)]
 
 use gstreamer as gst;
 use gstreamer::prelude::*;
-use anyhow::{Result, bail, Context};
+use anyhow::{Result, bail, Context, anyhow};
 
 use crate::recording_pipeline::PipelineSource;
 
@@ -10,45 +12,53 @@ const FRAME_RATE: i32 = 30;
 const VIDEO_WIDTH: i32 = 1920;
 const VIDEO_HEIGHT: i32 = 1080;
 
-///
-/// def
-/// 
-pub struct LibcameraPipelineSource {
+pub struct V4l2PipelineSource {
     source: Option<gst::Element>,
-    encoder: Option<gst::Element>,
     queue: Option<gst::Element>,
     capsfilter: Option<gst::Element>,
     videoconvert: Option<gst::Element>,
-    videoflip: Option<gst::Element>,
+    encoder: Option<gst::Element>,
     parser: Option<gst::Element>,
-    tee: Option<gst::Element>,
+    tee: Option<gst::Element>
 }
 
-///
-/// impls
-/// 
-impl LibcameraPipelineSource {
-    pub fn new() -> Self {
-        LibcameraPipelineSource {
-            source: None,
-            encoder: None,
-            queue: None,
-            capsfilter: None,
-            videoconvert: None,
-            videoflip: None,
-            parser: None,
-            tee: None,
+impl V4l2PipelineSource {
+    fn new() -> Self {
+        V4l2PipelineSource { 
+            source: None, 
+            queue: None, 
+            capsfilter: None, 
+            videoconvert: None, 
+            encoder: None, 
+            parser: None, 
+            tee: None
+         }
+    }
+
+    fn wait_for_video_device() -> Result<()> {
+        let devicePath = "/dev/video0"; // naive assume video0 here
+        let mut i = 0;
+        while !fs::exists(devicePath)? {
+            if i >= 10 {
+                return Err(anyhow!("Device not found after 10 seconds"));
+            }
+
+            println!("Waiting for /dev/video0/...");
+            thread::sleep(Duration::from_secs(1));
+            i = i+1;
         }
+
+        Ok(())
     }
 }
 
-impl Default for LibcameraPipelineSource {
+impl Default for V4l2PipelineSource {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl PipelineSource for LibcameraPipelineSource {
+impl PipelineSource for V4l2PipelineSource {
     fn get_source_pad(&self) -> Result<gst::Pad> {
         let tee = self.tee.as_ref()
             .context("Tee element not initialized")?;
@@ -63,98 +73,82 @@ impl PipelineSource for LibcameraPipelineSource {
     }
 
     fn setup_source(&mut self, pipeline: &gst::Pipeline) -> Result<()> {
-        println!("Creating gstreamer libcamera source");
+        println!("Creating gstreamer v4l2 source");
+        Self::wait_for_video_device()?;
 
-        self.source = Some(gst::ElementFactory::make("libcamerasrc")
-            .name("source")
-            .build()
-            .context("Failed to create libcamerasrc")?);
-        
-        self.encoder = Some(gst::ElementFactory::make("x264enc")
-            .name("encoder")
-            .build()
-            .context("Failed to create x264enc")?);
-        
+        self.source = Some(gst::ElementFactory::make("v4l2src")
+                    .name("source")
+                    .build()
+                    .context("Failed to create libcamerasrc")?);
+
         self.queue = Some(gst::ElementFactory::make("queue")
             .name("queue")
             .build()
             .context("Failed to create queue")?);
-        
+
         self.capsfilter = Some(gst::ElementFactory::make("capsfilter")
             .name("capsfilter")
             .build()
             .context("Failed to create capsfilter")?);
-        
+
         self.videoconvert = Some(gst::ElementFactory::make("videoconvert")
             .name("videoconvert")
             .build()
             .context("Failed to create videoconvert")?);
-        
-        self.videoflip = Some(gst::ElementFactory::make("videoflip")
-            .name("videoflip")
-            .property_from_str("method", "rotate-180")
+
+        self.encoder = Some(gst::ElementFactory::make("x264enc")
+            .name("encoder")
             .build()
-            .context("Failed to create videoflip")?);
-        
+            .context("Failed to create x264enc")?);
+
         self.parser = Some(gst::ElementFactory::make("h264parse")
             .name("h264parser")
             .build()
             .context("Failed to create h264parse")?);
-        
+
         self.tee = Some(gst::ElementFactory::make("tee")
             .name("tee")
             .build()
             .context("Failed to create tee")?);
 
-        // Configure encoder
-        let encoder = self.encoder.as_ref().unwrap();
-        encoder.set_property_from_str("tune", "zerolatency");  // Use string instead of int
-        encoder.set_property_from_str("speed-preset", "ultrafast");  // Use string instead of int
-        encoder.set_property("bitrate", 2000u32);
-        encoder.set_property("key-int-max", FRAME_RATE as u32);
+        let source = self.source.as_ref().unwrap();
+        source.set_property_from_str("device", "/dev/video0");
 
-        // Configure videoflip
-        // let videoflip = self.videoflip.as_ref().unwrap();
-        // videoflip.set_property("method", 2u32); // rotate-180
-
-        // Configure capsfilter
         let capsfilter = self.capsfilter.as_ref().unwrap();
         let caps = gst::Caps::builder("video/x-raw")
-            .field("format", "NV12")
-            .field("width", VIDEO_WIDTH)
-            .field("height", VIDEO_HEIGHT)
-            .field("framerate", gst::Fraction::new(FRAME_RATE, 1))
+            .field("format", "YUY2")
+            // .field("width", VIDEO_WIDTH)
+            // .field("height", VIDEO_HEIGHT)
+            .field("width", 640)
+            .field("height", 480)
+            .field("framerate", gst::Fraction::new(30, 1))
             .build();
         
         capsfilter.set_property("caps", &caps);
 
-        // Add all elements to pipeline
         pipeline.add_many(&[
             self.source.as_ref().unwrap(),
             self.queue.as_ref().unwrap(),
             self.capsfilter.as_ref().unwrap(),
-            self.videoflip.as_ref().unwrap(),
             self.videoconvert.as_ref().unwrap(),
             self.encoder.as_ref().unwrap(),
             self.parser.as_ref().unwrap(),
-            self.tee.as_ref().unwrap(),
+            self.tee.as_ref().unwrap()
         ])
-        .context("Failed to add elements to pipeline")?;
-        
-        // Link all elements
+        .context("Failed to add elements to v4l2 pipeline source")?;
+
         gst::Element::link_many(&[
             self.source.as_ref().unwrap(),
             self.queue.as_ref().unwrap(),
             self.capsfilter.as_ref().unwrap(),
-            self.videoflip.as_ref().unwrap(),
             self.videoconvert.as_ref().unwrap(),
             self.encoder.as_ref().unwrap(),
             self.parser.as_ref().unwrap(),
-            self.tee.as_ref().unwrap(),
+            self.tee.as_ref().unwrap()
         ])
         .map_err(|_| anyhow::anyhow!("Failed to link gstreamer elements"))?;
 
-        println!("Finished setup of gstreamer libcamera src");
+        println!("Finished setup of gstreamer v4l2 src");
 
         Ok(())
     }
