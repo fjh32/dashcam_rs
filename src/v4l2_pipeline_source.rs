@@ -23,7 +23,7 @@ pub struct V4l2PipelineSource {
 }
 
 impl V4l2PipelineSource {
-    fn new() -> Self {
+    pub fn new() -> Self {
         V4l2PipelineSource { 
             source: None, 
             queue: None, 

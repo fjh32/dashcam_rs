@@ -62,18 +62,20 @@ impl CamService {
 
         println!("Creating sinks BEFORE locking pipeline...");
         
-        // #[cfg(not(feature = "rpi"))]
-        // let (source, ts_sink, hls_sink) = {
-        //     println!("V4L2 MODE CamService");
-        //     let source = Box::new(V4l2PipelineSource::new());
-        //     let ts_sink = Box::new(TsFilePipelineSink::new_with_max_segments(
-        //         pipeline_arc.clone(),
-        //         false,
-        //         SEGMENTS_TO_KEEP,
-        //     ));
-        //     let hls_sink = Box::new(HlsPipelineSink::new(pipeline_arc.clone()));
-        //     (source, ts_sink, hls_sink)
-        // };
+        #[cfg(not(feature = "rpi"))]
+        let (source, ts_sink, hls_sink) = {
+            use crate::v4l2_pipeline_source::V4l2PipelineSource;
+
+            println!("V4L2 MODE CamService");
+            let source = Box::new(V4l2PipelineSource::new());
+            let ts_sink = Box::new(TsFilePipelineSink::new_with_max_segments(
+                config.clone(),
+                false,
+                SEGMENTS_TO_KEEP,
+            ));
+            let hls_sink = Box::new(HlsPipelineSink::new(config.clone()));
+            (source, ts_sink, hls_sink)
+        };
         
         // #[cfg(feature = "rpi")]
         let (source, ts_sink, hls_sink) = {
