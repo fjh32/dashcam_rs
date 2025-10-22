@@ -32,7 +32,7 @@ pub struct RecordingConfig {
 impl Default for RecordingConfig {
     fn default() -> Self {
         Self {
-            recording_dir: "./recordings".to_string(),
+            recording_dir: "./recordings".to_string(), // sensible default?
             video_duration: 2, // 2 second .ts files
             video_width: 1920,
             video_height: 1080,
@@ -104,10 +104,8 @@ impl RecordingPipeline {
             anyhow::bail!("No sinks added to pipeline");
         }
 
-
         source.setup_source(&self.pipeline)?;
 
-        println!("HEREEEE");
         for sink in &mut self.sinks {
             sink.setup_sink(&self.pipeline)?;
         }
@@ -161,21 +159,16 @@ impl RecordingPipeline {
 
             if let Some(handle) = self.pipeline_thread.take() {
                 let _ = handle.join();
-                // self.pipeline_thread = None;
             }
-
             self.pipeline.set_state(gst::State::Null)?;
         }
-
         Ok(())
     }
 
     fn pipeline_runner(pipeline: gst::Pipeline, pipeline_running: Arc<AtomicBool>) {
-        println!("Pipeline thread starting");
 
-        println!("About to set pipeline state to PLAYING...");
         match pipeline.set_state(gst::State::Playing) {
-            Ok(_) => println!("✅ Pipeline state successfully set to PLAYING"),
+            Ok(_) => println!("Pipeline state successfully set to PLAYING"),
             Err(e) => {
                 eprintln!("❌ Failed to start pipeline: {}", e);
                 pipeline_running.store(false, Ordering::SeqCst);
@@ -183,10 +176,7 @@ impl RecordingPipeline {
             }
         }
 
-        println!("Getting pipeline bus...");
         let bus = pipeline.bus().expect("Pipeline has no bus");
-        println!("Got pipeline bus, entering message loop...");
-
         loop {
             if !Self::handle_bus_message(&bus) {
                 break;

@@ -65,7 +65,6 @@ impl TsFilePipelineSink {
         config: &RecordingConfig,
         max_segments: i32,
     ) -> i32 {
-        // let ctx = context.lock().unwrap();
         let path = PathBuf::from(&config.recording_dir).join(SEGMENT_INDEX_FILE);
         
         match File::open(&path) {
@@ -106,47 +105,31 @@ impl PipelineSink for TsFilePipelineSink {
     }
 
     fn setup_sink(&mut self, pipeline: &gst::Pipeline) -> Result<()> {
-        println!("TsFilePipelineSink::setup_sink - START");
         
-        println!("Getting video duration from context...");
-        // let video_duration = {
-        //     let ctx = self.context.lock().unwrap();
-        //     println!("Locked context!");
-        //     let duration = ctx.config().video_duration;
-        //     println!("Got duration: {}", duration);
-        //     duration
-        // };
         let video_duration = self.config.video_duration;
-        println!("Released context lock");
         
-        println!("Creating queue...");
         self.queue = Some(gst::ElementFactory::make("queue")
             .name("file_sink_queue")
             .build()
             .context("Failed to create queue")?);
         
-        println!("Creating mpegtsmux...");
         self.muxer = Some(gst::ElementFactory::make("mpegtsmux")
             .name("muxer")
             .build()
             .context("Failed to create mpegtsmux")?);
         
-        println!("Creating splitmuxsink...");
         self.sink = Some(gst::ElementFactory::make("splitmuxsink")
             .name("sink")
             .build()
             .context("Failed to create splitmuxsink")?);
 
-        println!("Cloning elements...");
         let queue = self.queue.clone().unwrap();
         let muxer = self.muxer.clone().unwrap();
         let sink = self.sink.clone().unwrap();
         
-        println!("Setting properties...");
         sink.set_property("muxer", &muxer);
         sink.set_property("max-size-time", (video_duration * 1_000_000_000u64));
 
-        println!("Connecting signal...");
         let config = self.config.clone();
         let segment_index = self.segment_index.clone();
         let max_segments = self.max_segments;
@@ -160,106 +143,16 @@ impl PipelineSink for TsFilePipelineSink {
             };
             Some(filename.to_value())
         });
-        println!("Signal connected");
 
-        println!("Adding to pipeline...");
         pipeline.add_many(&[&queue, &sink])
             .context("Failed to add sink elements to pipeline")?;
 
-        println!("Linking queue to sink...");
         queue.link(&sink)
             .context("Failed to link queue to splitmuxsink")?;
 
-        println!("TsFilePipelineSink::setup_sink - COMPLETE");
         Ok(())
     }
 
-    // fn setup_sink(&mut self, pipeline: &gst::Pipeline) -> Result<()> {
-    //     // Create elements
-    //     self.queue = Some(gst::ElementFactory::make("queue")
-    //         .name("file_sink_queue")
-    //         .build()
-    //         .context("Failed to create queue")?);
-        
-    //     self.muxer = Some(gst::ElementFactory::make("mpegtsmux")
-    //         .name("muxer")
-    //         .build()
-    //         .context("Failed to create mpegtsmux")?);
-        
-    //     self.sink = Some(gst::ElementFactory::make("splitmuxsink")
-    //         .name("sink")
-    //         .build()
-    //         .context("Failed to create splitmuxsink")?);
-
-    //     let queue = self.queue.clone().unwrap();
-    //     let muxer = self.muxer.clone().unwrap();
-    //     let sink = self.sink.clone().unwrap();   
-
-    //     // Configure splitmuxsink
-    //     let video_duration = {
-    //         let ctx = self.context.lock().unwrap();
-    //         ctx.config().video_duration
-    //     };
-        
-    //     sink.set_property("muxer", &muxer);
-    //     sink.set_property(
-    //         "max-size-time",
-    //         (video_duration * 1_000_000_000u64),
-    //     );
-
-    //     // Connect signal using closure - much simpler!
-    //     let context = self.context.clone();
-    //     let segment_index = self.segment_index.clone();
-    //     let max_segments = self.max_segments;
-    //     let make_playlist = self.make_playlist;
-        
-    //     // the closure has basically the same type signature as the c++ make_new_filename
-    //     // Variables MOVED into the closure are owned by the closure.
-    //     // The closure can pass references to them to other functions.
-    //     // Because the variables are ARCs (reference-counted), the underlying data
-    //     // won't be cleaned up until all Arc clones are dropped, including the ones
-    //     // owned by this closure.
-    //     sink.connect("format-location", false, move |_args| {
-    //         // let _element = _args[0].get::<gst::Element>().ok()?; // this would be the splitmuxsink
-    //         // let _fragment_id = _args[1].get::<u32>().ok()?;
-            
-    //         let filename = if make_playlist {
-    //             make_filename_with_playlist_closure(&context, &segment_index, max_segments)
-    //         } else {
-    //             make_filename_closure(&context, &segment_index, max_segments)
-    //         };
-            
-    //         Some(filename.to_value())
-    //     });
-
-    //     // Add elements to pipeline
-    //     pipeline.add_many(&[&queue, &sink])
-    //         .context("Failed to add sink elements to pipeline")?;
-
-    //     // Link queue to sink
-    //     queue.link(&sink)
-    //         .context("Failed to link queue to splitmuxsink")?;
-
-    //     // Link tee to queue
-    //     // let tee = {
-    //     //     let ctx = self.context.lock().unwrap();
-    //     //     ctx.get_source_tee()?
-    //     // };
-
-    //     // let tee_pad = tee.request_pad_simple("src_%u")
-    //     //     .context("Failed to request pad from tee")?;
-        
-    //     // let queue_pad = queue.static_pad("sink")
-    //     //     .context("Failed to get sink pad from queue")?;
-
-    //     // tee_pad.link(&queue_pad)
-    //     //     .context("Failed to link tee to queue")?;
-
-    //     // self.tee_pad = Some(tee_pad);
-
-    //     println!("File sink elements setup successfully.");
-    //     Ok(())
-    // }
 }
 
 impl Drop for TsFilePipelineSink {
@@ -299,19 +192,11 @@ fn make_filename_closure(
     let ts_filepath = PathBuf::from(&subdir).join(&ts_filename);
     let ts_filepath_str = ts_filepath.to_string_lossy().to_string();
     
-    // {
-    //     let ctx = context.lock().unwrap();
-    //     let mut current_name = ctx.current_video_name.lock().unwrap();
-    //     *current_name = ts_filepath_str.clone();
-    // }
-    
     let mut index = segment_index.lock().unwrap();
     *index += 1;
     if *index >= max_segments {
         *index = 0;
     }
-    
-    // println!("Recording new video: {}", ts_filepath_str);
     ts_filepath_str
 }
 
@@ -355,8 +240,6 @@ fn make_filename_with_playlist_closure(
     );
     
     let _ = fs::write(&m3u8_filepath, playlist_content);
-    
-    // println!("Generated HLS playlist: {:?}", m3u8_filepath);
     
     ts_filepath
 }

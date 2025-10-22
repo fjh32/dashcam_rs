@@ -9,7 +9,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use regex::Regex;
 
 use crate::recording_pipeline::{RecordingPipeline, RecordingConfig};
-// use crate::v4l2_pipeline_source::V4l2PipelineSource;
+use crate::v4l2_pipeline_source::V4l2PipelineSource;
 use crate::libcamera_pipeline_source::LibcameraPipelineSource;
 use crate::ts_file_pipeline_sink::TsFilePipelineSink;
 use crate::hls_pipeline_sink::HlsPipelineSink;
@@ -19,6 +19,12 @@ const SOCKET_PATH: &str = "/tmp/dashcam.sock";
 #[cfg(debug_assertions)]
 const VIDEO_DURATION: u64 = 2;
 #[cfg(debug_assertions)]
+const VIDEO_WIDTH: i32 = 640;
+#[cfg(debug_assertions)]
+const VIDEO_HEIGHT: i32 = 480;
+#[cfg(debug_assertions)]
+const VIDEO_FRAMERATE: i32 = 10;
+#[cfg(debug_assertions)]
 const RECORDING_DIR: &str = "./recordings/";
 #[cfg(debug_assertions)]
 const RECORDING_SAVE_DIR: &str = "./recordings/save/";
@@ -27,6 +33,12 @@ const SEGMENTS_TO_KEEP: i32 = 86400 / 2 * 2; // 2 days worth
 
 #[cfg(not(debug_assertions))]
 const VIDEO_DURATION: u64 = 2;
+#[cfg(not(debug_assertions))]
+const VIDEO_WIDTH: i32 = 1920;
+#[cfg(not(debug_assertions))]
+const VIDEO_HEIGHT: i32 = 1080;
+#[cfg(not(debug_assertions))]
+const VIDEO_FRAMERATE: i32 = 30;
 #[cfg(not(debug_assertions))]
 const RECORDING_DIR: &str = "/var/lib/dashcam/recordings/";
 #[cfg(not(debug_assertions))]
@@ -48,12 +60,13 @@ impl CamService {
         let recording_dir = RECORDING_DIR.to_string();
         let recording_save_dir = RECORDING_SAVE_DIR.to_string();
 
+        // Configure RecordingPipeline Settings
         let config = RecordingConfig {
             recording_dir: recording_dir.clone(),
             video_duration: VIDEO_DURATION,
-            video_width: 640,
-            video_height: 480,
-            frame_rate: 10,
+            video_width: VIDEO_WIDTH,
+            video_height: VIDEO_HEIGHT,
+            frame_rate: VIDEO_FRAMERATE,
         };
 
         println!("Creating RecordingPipeline...");
@@ -64,10 +77,9 @@ impl CamService {
         
         #[cfg(not(feature = "rpi"))]
         let (source, ts_sink, hls_sink) = {
-            use crate::v4l2_pipeline_source::V4l2PipelineSource;
 
             println!("V4L2 MODE CamService");
-            let source = Box::new(V4l2PipelineSource::new());
+            let source = Box::new(V4l2PipelineSource::new(config.clone()));
             let ts_sink = Box::new(TsFilePipelineSink::new_with_max_segments(
                 config.clone(),
                 false,
@@ -77,10 +89,10 @@ impl CamService {
             (source, ts_sink, hls_sink)
         };
         
-        // #[cfg(feature = "rpi")]
+        #[cfg(feature = "rpi")]
         let (source, ts_sink, hls_sink) = {
             println!("RPI MODE CamService");
-            let source = Box::new(LibcameraPipelineSource::new());
+            let source = Box::new(LibcameraPipelineSource::new(config.clone()));
             let ts_sink = Box::new(TsFilePipelineSink::new_with_max_segments(
                 config.clone(),
                 false,

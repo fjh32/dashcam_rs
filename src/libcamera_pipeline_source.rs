@@ -4,7 +4,7 @@ use gstreamer as gst;
 use gstreamer::prelude::*;
 use anyhow::{Result, bail, Context};
 
-use crate::recording_pipeline::PipelineSource;
+use crate::recording_pipeline::{PipelineSource, RecordingConfig};
 
 const FRAME_RATE: i32 = 30;
 const VIDEO_WIDTH: i32 = 1920;
@@ -14,6 +14,7 @@ const VIDEO_HEIGHT: i32 = 1080;
 /// def
 /// 
 pub struct LibcameraPipelineSource {
+    config: RecordingConfig,
     source: Option<gst::Element>,
     encoder: Option<gst::Element>,
     queue: Option<gst::Element>,
@@ -28,8 +29,9 @@ pub struct LibcameraPipelineSource {
 /// impls
 /// 
 impl LibcameraPipelineSource {
-    pub fn new() -> Self {
+    pub fn new(config: RecordingConfig) -> Self {
         LibcameraPipelineSource {
+            config: config,
             source: None,
             encoder: None,
             queue: None,
@@ -44,7 +46,7 @@ impl LibcameraPipelineSource {
 
 impl Default for LibcameraPipelineSource {
     fn default() -> Self {
-        Self::new()
+        Self::new(RecordingConfig::default())
     }
 }
 
@@ -121,9 +123,9 @@ impl PipelineSource for LibcameraPipelineSource {
         let capsfilter = self.capsfilter.as_ref().unwrap();
         let caps = gst::Caps::builder("video/x-raw")
             .field("format", "NV12")
-            .field("width", VIDEO_WIDTH)
-            .field("height", VIDEO_HEIGHT)
-            .field("framerate", gst::Fraction::new(FRAME_RATE, 1))
+            .field("width", self.config.video_width)
+            .field("height", self.config.video_height)
+            .field("framerate", gst::Fraction::new(self.config.frame_rate, 1))
             .build();
         
         capsfilter.set_property("caps", &caps);

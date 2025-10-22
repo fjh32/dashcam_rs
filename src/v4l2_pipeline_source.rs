@@ -6,13 +6,14 @@ use gstreamer as gst;
 use gstreamer::prelude::*;
 use anyhow::{Result, bail, Context, anyhow};
 
-use crate::recording_pipeline::PipelineSource;
+use crate::recording_pipeline::{PipelineSource, RecordingConfig};
 
 const FRAME_RATE: i32 = 30;
 const VIDEO_WIDTH: i32 = 1920;
 const VIDEO_HEIGHT: i32 = 1080;
 
 pub struct V4l2PipelineSource {
+    config: RecordingConfig,
     source: Option<gst::Element>,
     queue: Option<gst::Element>,
     capsfilter: Option<gst::Element>,
@@ -23,8 +24,9 @@ pub struct V4l2PipelineSource {
 }
 
 impl V4l2PipelineSource {
-    pub fn new() -> Self {
-        V4l2PipelineSource { 
+    pub fn new(config: RecordingConfig) -> Self {
+        V4l2PipelineSource {
+            config: config,
             source: None, 
             queue: None, 
             capsfilter: None, 
@@ -54,7 +56,7 @@ impl V4l2PipelineSource {
 
 impl Default for V4l2PipelineSource {
     fn default() -> Self {
-        Self::new()
+        Self::new(RecordingConfig::default())
     }
 }
 
@@ -121,7 +123,7 @@ impl PipelineSource for V4l2PipelineSource {
             // .field("height", VIDEO_HEIGHT)
             .field("width", 640)
             .field("height", 480)
-            .field("framerate", gst::Fraction::new(30, 1))
+            .field("framerate", gst::Fraction::new(10, 1))
             .build();
         
         capsfilter.set_property("caps", &caps);

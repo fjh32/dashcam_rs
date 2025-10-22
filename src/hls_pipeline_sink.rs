@@ -105,23 +105,6 @@ impl PipelineSink for HlsPipelineSink {
         gst::Element::link_many(&[&queue, &parser, &mux, &sink])
             .context("Failed to link HLS elements")?;
 
-        // Link tee to queue
-        // let tee = {
-        //     let ctx = self.context.lock().unwrap();
-        //     ctx.get_source_tee()?
-        // };
-
-        // let tee_hls_pad = tee.request_pad_simple("src_%u")
-        //     .context("Failed to request pad from tee")?;
-
-        // let queue_hls_pad = queue.static_pad("sink")
-        //     .context("Failed to get sink pad from queue")?;
-
-        // tee_hls_pad.link(&queue_hls_pad)
-        //     .context("Failed to link tee to HLS queue")?;
-
-        // self.tee_pad = Some(tee_hls_pad);
-
         println!("HLS elements setup successfully. Web root: {}", self.webroot);
         Ok(())
     }

@@ -1,0 +1,13 @@
+[Unit]
+Description=Dashcam Recording Service
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/dashcam_rs
+Restart=always
+User=@USER@
+WorkingDirectory=/var/lib/dashcam/recordings
+
+[Install]
+WantedBy=multi-user.target
