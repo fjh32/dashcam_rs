@@ -9,5 +9,14 @@ chrono = "0.4.42"
 ctrlc = "3.5.0"
 gstreamer = "0.24.2"
 gstreamer-video = "0.24.2"
+regex = "1.12.2"
+signal-hook = "0.3.18"
 thiserror = "2.0.17"
 tokio = "1.48.0"
+
+[features]
+rpi = []
+
+[profile.release]
+opt-level = 3
+lto = true
