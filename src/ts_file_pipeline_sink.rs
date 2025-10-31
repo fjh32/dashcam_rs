@@ -4,7 +4,8 @@ use anyhow::{Result, Context};
 use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicI32, Ordering};
 use crate::recording_pipeline::{PipelineSink, RecordingConfig, RecordingPipeline};
 
 const MAX_SEGMENTS: i32 = 86400;
@@ -13,7 +14,7 @@ const SEGMENT_INDEX_FILE: &str = "segment_index.txt";
 pub struct TsFilePipelineSink {
     // context: Arc<Mutex<RecordingPipeline>>,
     config: RecordingConfig,
-    segment_index: Arc<Mutex<i32>>,
+    segment_index: Arc<AtomicI32>,
     max_segments: i32,
     make_playlist: bool,
     queue: Option<gst::Element>,
@@ -37,7 +38,7 @@ impl TsFilePipelineSink {
         let segment_index = Self::load_current_segment_index_from_disk(&config, max_segments);
         TsFilePipelineSink {
             config,
-            segment_index: Arc::new(Mutex::new(segment_index)),
+            segment_index: Arc::new(AtomicI32::new(segment_index)),
             max_segments,
             make_playlist,
             queue: None,
@@ -173,18 +174,14 @@ impl Drop for TsFilePipelineSink {
 // MAKE NEW FILENAMES for format-location gstreamer signal
 fn make_filename_closure(
     config: &RecordingConfig,
-    segment_index: &Arc<Mutex<i32>>,
+    segment_index: &Arc<AtomicI32>,
     max_segments: i32,
 ) -> String {
-    let mut index = segment_index.lock().unwrap();
-    let current_index = *index;
+    // Load current value
+    let current_index = segment_index.load(Ordering::SeqCst);
     
-    drop(index);
-
-
-    // A call to save_segment_index_to_disk may take as long as a db call to update current segment index or something
+    // Do all the slow I/O work with the loaded value
     let _ = TsFilePipelineSink::save_segment_index_to_disk(config, current_index);
-    // or send over pipe or channel to the db service to handle
     
     let subdir = {
         let subdir_digits = current_index / 1000;
@@ -197,18 +194,23 @@ fn make_filename_closure(
     let ts_filepath = PathBuf::from(&subdir).join(&ts_filename);
     let ts_filepath_str = ts_filepath.to_string_lossy().to_string();
     
-    let mut index = segment_index.lock().unwrap();
-    *index += 1;
-    if *index >= max_segments {
-        *index = 0;
-    }
+    // Increment at the end with wraparound
+    let _ = segment_index.fetch_update(
+        Ordering::SeqCst,
+        Ordering::SeqCst,
+        |current| {
+            let next = current + 1;
+            Some(if next >= max_segments { 0 } else { next })
+        }
+    );
+    
     ts_filepath_str
 }
 
 
 fn make_filename_with_playlist_closure(
     config: &RecordingConfig,
-    segment_index: &Arc<Mutex<i32>>,
+    segment_index: &Arc<AtomicI32>,
     max_segments: i32,
 ) -> String {
     let ts_filepath = make_filename_closure(config, segment_index, max_segments);
