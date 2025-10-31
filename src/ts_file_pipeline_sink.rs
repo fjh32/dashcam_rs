@@ -19,7 +19,8 @@ pub struct TsFilePipelineSink {
     queue: Option<gst::Element>,
     muxer: Option<gst::Element>,
     sink: Option<gst::Element>,
-    tee_pad: Option<gst::Pad>,
+    // create DB handler struct that encapsulates db connection 
+    // with db methods and add as property here
 }
 
 impl TsFilePipelineSink {
@@ -32,6 +33,7 @@ impl TsFilePipelineSink {
         make_playlist: bool,
         max_segments: i32,
     ) -> Self {
+        /// 
         let segment_index = Self::load_current_segment_index_from_disk(&config, max_segments);
         TsFilePipelineSink {
             config,
@@ -40,22 +42,22 @@ impl TsFilePipelineSink {
             make_playlist,
             queue: None,
             muxer: None,
-            sink: None,
-            tee_pad: None,
+            sink: None
         }
     }
 
+    // Convert load and save segment index to disk into funcs that write over a pipe/channel
+    // and read/update sqlite database with segment_index
     fn save_segment_index_to_disk(
         config: &RecordingConfig,
-        segment_index: &Arc<Mutex<i32>>,
+        segment_index: i32,
     ) -> Result<()> {
         let path = PathBuf::from(&config.recording_dir).join(SEGMENT_INDEX_FILE);
         
         let mut file = File::create(path)
             .context("Failed to create segment index file")?;
         
-        let index = *segment_index.lock().unwrap();
-        write!(file, "{}", index)
+        write!(file, "{}", segment_index)
             .context("Failed to write segment index")?;
         
         Ok(())
@@ -178,8 +180,11 @@ fn make_filename_closure(
     let current_index = *index;
     
     drop(index);
-    
-    let _ = TsFilePipelineSink::save_segment_index_to_disk(config, segment_index);
+
+
+    // A call to save_segment_index_to_disk may take as long as a db call to update current segment index or something
+    let _ = TsFilePipelineSink::save_segment_index_to_disk(config, current_index);
+    // or send over pipe or channel to the db service to handle
     
     let subdir = {
         let subdir_digits = current_index / 1000;
