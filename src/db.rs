@@ -22,7 +22,7 @@ pub struct Trip {
 }
 
 pub struct DashcamDb {
-    conn: Connection,
+    pub conn: Connection,
 }
 
 impl DashcamDb {
@@ -38,6 +38,7 @@ impl DashcamDb {
         let db = Self::open(db_path)?;
         db.run_schema(schema_sql)?;
         db.clamp_segment_index()?;
+        db.mark_fully_evicted_trips()?;
         Ok(db)
     }
 
@@ -49,7 +50,7 @@ impl DashcamDb {
             .expect("Failed to read schema file");
         Self::setup_with_paths_and_schema(db_path, &schema_sql)
     }
-    
+
     /// setup with constants.rs
     pub fn setup() -> rusqlite::Result<Self> {
         let db_path = PathBuf::from(DB_PATH);
@@ -173,6 +174,8 @@ impl DashcamDb {
 
     /// Mark trips whose files are certainly overwritten by the ring.
     /// Uses absolute_segments to be robust to SEGMENTS_TO_KEEP changes.
+    /// 
+    /// Call this function on a schedule or every so often somewhere else....
     pub fn mark_fully_evicted_trips(&self) -> rusqlite::Result<usize> {
         let tx = self.conn.unchecked_transaction()?;
 
