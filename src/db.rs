@@ -15,7 +15,10 @@ pub struct Trip {
     pub start_clock_source: Option<String>,
     pub end_clock_source: Option<String>,
     pub note: Option<String>,
-    // DB also has: start_gen, end_gen, fully_evicted, evicted_at_utc (not in this struct)
+    pub start_gen: i64,
+    pub end_gen: Option<i64>,
+    pub fully_evicted: bool,
+    pub evicted_at_utc: Option<i64>,
 }
 
 pub struct DashcamDb {
@@ -23,8 +26,31 @@ pub struct DashcamDb {
 }
 
 impl DashcamDb {
-    // ---- lifecycle ----
+    //////////// helper DB connection setups
+    pub fn setup_with_paths_and_schema<P: AsRef<std::path::Path>>(
+        db_path: P,
+        schema_sql: &str,
+    ) -> rusqlite::Result<Self> {
+        let db_path = db_path.as_ref();
+        if let Some(parent) = db_path.parent() {
+            std::fs::create_dir_all(parent).expect("Failed to create DB directory");
+        }
+        let db = Self::open(db_path)?;
+        db.run_schema(schema_sql)?;
+        db.clamp_segment_index()?;
+        Ok(db)
+    }
 
+    pub fn setup_with_paths_and_schema_file<P: AsRef<std::path::Path>, Q: AsRef<std::path::Path>>(
+        db_path: P,
+        schema_path: Q,
+    ) -> rusqlite::Result<Self> {
+        let schema_sql = std::fs::read_to_string(&schema_path)
+            .expect("Failed to read schema file");
+        Self::setup_with_paths_and_schema(db_path, &schema_sql)
+    }
+    
+    /// setup with constants.rs
     pub fn setup() -> rusqlite::Result<Self> {
         let db_path = PathBuf::from(DB_PATH);
         if let Some(parent) = db_path.parent() {
@@ -41,7 +67,6 @@ impl DashcamDb {
         Ok(db)
     }
 
-    // open(path/to/dbfile.db)
     pub fn open<P: AsRef<Path>>(path: P) -> rusqlite::Result<Self> {
         let conn = Connection::open(path)?;
         conn.pragma_update(None, "journal_mode", &"WAL")?;
@@ -175,11 +200,17 @@ impl DashcamDb {
 
     // ---- trips ----
 
-    fn fetch_open_trip(&self) -> rusqlite::Result<Option<Trip>> {
+    pub fn fetch_open_trip(&self) -> rusqlite::Result<Option<Trip>> {
         self.conn
             .query_row(
-                "SELECT id, boot_id, start_time_utc, end_time_utc, start_segment, final_segment, start_clock_source, end_clock_source, note
-                 FROM trips WHERE final_segment IS NULL ORDER BY id DESC LIMIT 1;",
+                "SELECT id, boot_id, start_time_utc, end_time_utc,
+                        start_segment, final_segment,
+                        start_clock_source, end_clock_source, note,
+                        start_gen, end_gen, fully_evicted, evicted_at_utc
+                 FROM trips
+                 WHERE final_segment IS NULL
+                 ORDER BY id DESC
+                 LIMIT 1;",
                 [],
                 |r| {
                     Ok(Trip {
@@ -188,17 +219,21 @@ impl DashcamDb {
                         start_time_utc: r.get(2)?,
                         end_time_utc: r.get(3)?,
                         start_segment: r.get(4)?,
-                        final_segment: r.get::<_, Option<i64>>(5)?,
+                        final_segment: r.get(5)?,
                         start_clock_source: r.get(6)?,
                         end_clock_source: r.get(7)?,
                         note: r.get(8)?,
+                        start_gen: r.get(9)?,
+                        end_gen: r.get(10)?,
+                        fully_evicted: r.get(11)?,
+                        evicted_at_utc: r.get(12)?,
                     })
                 },
             )
             .optional()
     }
 
-    fn finalize_open_trip(
+    pub fn finalize_open_trip(
         &self,
         end_segment_inclusive: i64,
         end_clock_source: &str,
@@ -214,7 +249,7 @@ impl DashcamDb {
         Ok(())
     }
 
-    fn insert_trip(
+    pub fn insert_trip(
         &self,
         boot_id: &str,
         start_segment: i64,
@@ -238,65 +273,16 @@ impl DashcamDb {
             start_clock_source: Some(start_clock_source.to_string()),
             end_clock_source: None,
             note: None,
-        })
-    }
-
-    /// Call on boot/service start.
-    pub fn start_or_resume_trip(&self, boot_id: &str, clock_src: &str) -> rusqlite::Result<Trip> {
-        let tx = self.conn.unchecked_transaction()?;
-
-        let current: i64 = tx.query_row(
-            "SELECT value FROM counters WHERE name='segment_index';",
-            [],
-            |r| r.get(0),
-        )?;
-        let cur_gen: i64 = tx.query_row(
-            "SELECT value FROM counters WHERE name='segment_generation';",
-            [],
-            |r| r.get(0),
-        )?;
-
-        if let Some((open_id, open_start)) = tx
-            .query_row(
-                "SELECT id, start_segment FROM trips WHERE final_segment IS NULL ORDER BY id DESC LIMIT 1;",
-                [],
-                |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)),
-            )
-            .optional()?
-        {
-            let end_seg = current - 1;
-            if end_seg >= open_start {
-                tx.execute(
-                    "UPDATE trips
-                     SET final_segment = ?, end_time_utc = ?, end_clock_source = ?, end_gen = ?
-                     WHERE id = ? AND final_segment IS NULL;",
-                    params![end_seg, Self::now(), clock_src, cur_gen, open_id],
-                )?;
-            }
-        }
-
-        tx.execute(
-            "INSERT INTO trips(boot_id, start_time_utc, start_segment, start_clock_source, start_gen)
-             VALUES(?, ?, ?, ?, ?);",
-            params![boot_id, Self::now(), current, clock_src, cur_gen],
-        )?;
-        let id = tx.last_insert_rowid();
-        tx.commit()?;
-
-        Ok(Trip {
-            id,
-            boot_id: boot_id.to_string(),
-            start_time_utc: Self::now(),
-            end_time_utc: None,
-            start_segment: current,
-            final_segment: None,
-            start_clock_source: Some(clock_src.to_string()),
-            end_clock_source: None,
-            note: None,
+            start_gen,
+            end_gen: None,
+            fully_evicted: false,
+            evicted_at_utc: None,
         })
     }
 
     /// MSG: NEW TRIP
+    /// - edit current trip's row with FINAL_SEGMENT.
+    /// - create new Trip row in table
     pub fn new_trip(&self, boot_id: &str, clock_src: &str) -> rusqlite::Result<Trip> {
         let tx = self.conn.unchecked_transaction()?;
 
@@ -313,7 +299,11 @@ impl DashcamDb {
 
         if let Some((open_id, open_start)) = tx
             .query_row(
-                "SELECT id, start_segment FROM trips WHERE final_segment IS NULL ORDER BY id DESC LIMIT 1;",
+                "SELECT id, start_segment
+                 FROM trips
+                 WHERE final_segment IS NULL
+                 ORDER BY id DESC
+                 LIMIT 1;",
                 [],
                 |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)),
             )
@@ -335,11 +325,11 @@ impl DashcamDb {
              VALUES(?, ?, ?, ?, ?);",
             params![boot_id, Self::now(), current, clock_src, cur_gen],
         )?;
-        let id = tx.last_insert_rowid();
+        let new_id = tx.last_insert_rowid();
         tx.commit()?;
 
         Ok(Trip {
-            id,
+            id: new_id,
             boot_id: boot_id.to_string(),
             start_time_utc: Self::now(),
             end_time_utc: None,
@@ -348,16 +338,25 @@ impl DashcamDb {
             start_clock_source: Some(clock_src.to_string()),
             end_clock_source: None,
             note: None,
+            start_gen: cur_gen,
+            end_gen: None,
+            fully_evicted: false,
+            evicted_at_utc: None,
         })
     }
 
     /// MSG: SAVE TRIP (close+open trip; do file I/O & ffmpeg outside)
+    ///     - Same process as NEW TRIP
+    ///     - I/O: previous trip, save all files associated with the trip in save/ dir
+    ///     - Copy TRIP row from TRIPS table to SAVED_TRIPS table with dir to all saved videos.
+    ///     - I/O: stitch together all .ts files from trip into a single mp4 with ffmpeg
     pub fn save_trip_and_start_new(
         &self,
         boot_id: &str,
         clock_src: &str,
-        saved_dir: &str,
-    ) -> rusqlite::Result<(Trip, i64, i64, i64)> {
+        saved_dir: &str)
+        // returns (new_trip, closed_trip_id, closed_start, closed_end)
+        -> rusqlite::Result<(Trip, i64, i64, i64)> {
         let tx = self.conn.unchecked_transaction()?;
 
         let current: i64 = tx.query_row(
@@ -373,7 +372,11 @@ impl DashcamDb {
 
         let (closed_id, closed_start) = tx
             .query_row(
-                "SELECT id, start_segment FROM trips WHERE final_segment IS NULL ORDER BY id DESC LIMIT 1;",
+                "SELECT id, start_segment
+                 FROM trips
+                 WHERE final_segment IS NULL
+                 ORDER BY id DESC
+                 LIMIT 1;",
                 [],
                 |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)),
             )
@@ -413,6 +416,10 @@ impl DashcamDb {
             start_clock_source: Some(clock_src.to_string()),
             end_clock_source: None,
             note: None,
+            start_gen: cur_gen,
+            end_gen: None,
+            fully_evicted: false,
+            evicted_at_utc: None,
         };
 
         Ok((new_trip, closed_id, closed_start, closed_end))
@@ -422,33 +429,30 @@ impl DashcamDb {
 
     /// Fast check for a single trip’s eviction status using absolute_segments.
     pub fn is_trip_fully_evicted(&self, trip_id: i64) -> rusqlite::Result<bool> {
-        // Grab the absolute latest once, along with the target trip’s end_gen/final_segment.
-        // If trip is still open (final_segment is NULL), it cannot be fully evicted.
-        let (abs_latest, end_gen_opt, final_seg_opt): (i64, Option<i64>, Option<i64>) =
+        // Single-row pull; short-circuit if already flagged or still open.
+        let (abs_latest, fully_evicted, final_seg_opt, end_gen_or_start): (i64, bool, Option<i64>, i64) =
             self.conn.query_row(
                 "SELECT
                      (SELECT value FROM counters WHERE name='absolute_segments') AS abs_latest,
-                     t.end_gen, t.final_segment
+                     t.fully_evicted,
+                     t.final_segment,
+                     COALESCE(t.end_gen, t.start_gen)
                  FROM trips t
                  WHERE t.id = ?1;",
                 params![trip_id],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
             )?;
 
+        if fully_evicted {
+            return Ok(true);
+        }
         let final_seg = match final_seg_opt {
             Some(v) => v,
             None => return Ok(false), // still open -> not fully evicted
         };
-        // If end_gen is NULL (shouldn’t happen for closed trips), fall back to start_gen
-        // to be defensive.
-        let (end_gen, start_gen): (i64, i64) = self.conn.query_row(
-            "SELECT COALESCE(end_gen, start_gen), start_gen FROM trips WHERE id = ?1;",
-            params![trip_id],
-            |r| Ok((r.get(0)?, r.get(1)?)),
-        )?;
 
         let abs_earliest = (abs_latest - (SEGMENTS_TO_KEEP - 1)).max(0);
-        let abs_end = end_gen.saturating_mul(SEGMENTS_TO_KEEP) + final_seg;
+        let abs_end = end_gen_or_start.saturating_mul(SEGMENTS_TO_KEEP) + final_seg;
 
         Ok(abs_end < abs_earliest)
     }
@@ -456,8 +460,10 @@ impl DashcamDb {
     /// Return all trips that are not flagged as fully evicted (good for timeline UI).
     pub fn list_active_trips(&self) -> rusqlite::Result<Vec<Trip>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, boot_id, start_time_utc, end_time_utc, start_segment,
-                    final_segment, start_clock_source, end_clock_source, note
+            "SELECT id, boot_id, start_time_utc, end_time_utc,
+                    start_segment, final_segment,
+                    start_clock_source, end_clock_source, note,
+                    start_gen, end_gen, fully_evicted, evicted_at_utc
              FROM trips
              WHERE fully_evicted = 0
              ORDER BY id DESC;",
@@ -475,6 +481,10 @@ impl DashcamDb {
                     start_clock_source: r.get(6)?,
                     end_clock_source: r.get(7)?,
                     note: r.get(8)?,
+                    start_gen: r.get(9)?,
+                    end_gen: r.get(10)?,
+                    fully_evicted: r.get(11)?,
+                    evicted_at_utc: r.get(12)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;

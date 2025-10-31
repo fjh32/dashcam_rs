@@ -267,7 +267,7 @@ impl CamService {
     ///     If that is the case, fill that value with current segment index before incrementing it and creating a new trip.
     /// HANDLE MESSAGES
     /// MSG: NEW TRIP
-    ///     - edit trip's row with FINAL_SEGMENT.
+    ///     - edit current trip's row with FINAL_SEGMENT.
     ///     - create new Trip row in table
     /// MSG: SAVE TRIP
     ///     - Same process as NEW TRIP
