@@ -1,8 +1,10 @@
 use gstreamer as gst;
 use gstreamer::prelude::*;
 use anyhow::{Result, Context};
+use tracing::info;
 use std::sync::{Arc, Mutex};
 use crate::recording_pipeline::{PipelineSink, RecordingConfig, RecordingPipeline};
+use crate::log;
 
 pub struct HlsPipelineSink {
     config: RecordingConfig,
@@ -42,7 +44,7 @@ impl PipelineSink for HlsPipelineSink {
     }
 
     fn setup_sink(&mut self, pipeline: &gst::Pipeline) -> Result<()> {
-        println!("Creating HlsPipelineSink");
+        info!("Creating HlsPipelineSink");
 
         // Create elements
         self.queue = Some(gst::ElementFactory::make("queue")
@@ -105,7 +107,7 @@ impl PipelineSink for HlsPipelineSink {
         gst::Element::link_many(&[&queue, &parser, &mux, &sink])
             .context("Failed to link HLS elements")?;
 
-        println!("HLS elements setup successfully. Web root: {}", self.webroot);
+        info!("HLS elements setup successfully. Web root: {}", self.webroot);
         Ok(())
     }
 }

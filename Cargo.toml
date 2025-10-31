@@ -10,9 +10,12 @@ ctrlc = "3.5.0"
 gstreamer = "0.24.2"
 gstreamer-video = "0.24.2"
 regex = "1.12.2"
+rusqlite = { version = "0.37.0", features = ["bundled", "unlock_notify"] }
 signal-hook = "0.3.18"
 thiserror = "2.0.17"
 tokio = "1.48.0"
+tracing = "0.1.41"
+tracing-subscriber = "0.3.20"
 
 [features]
 rpi = []

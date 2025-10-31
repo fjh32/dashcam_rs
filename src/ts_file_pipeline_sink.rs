@@ -1,6 +1,7 @@
 use gstreamer as gst;
 use gstreamer::prelude::*;
 use anyhow::{Result, Context};
+use tracing::{error, info};
 use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -76,7 +77,7 @@ impl TsFilePipelineSink {
                 if file.read_to_string(&mut contents).is_ok() {
                     if let Ok(value) = contents.trim().parse::<i32>() {
                         if value >= 0 && value < max_segments {
-                            println!("Loaded segment index: {}", value);
+                            info!("Loaded segment index: {}", value);
                             return value;
                         } else {
                             eprintln!("Warning: Invalid segment index file contents. Defaulting to 0.");
@@ -85,7 +86,7 @@ impl TsFilePipelineSink {
                 }
             }
             Err(_) => {
-                println!("Segment index file not found. Starting from 0.");
+                error!("Segment index file not found. Starting from 0.");
             }
         }
         

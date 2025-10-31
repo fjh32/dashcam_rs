@@ -3,8 +3,11 @@
 use anyhow::{Context, Result, bail};
 use gstreamer as gst;
 use gstreamer::prelude::*;
+use tracing::info;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+
+use crate::constants::*;
 
 /////////////////////// Traits ////////////////////////
 pub trait PipelineSource: Send {
@@ -32,11 +35,11 @@ pub struct RecordingConfig {
 impl Default for RecordingConfig {
     fn default() -> Self {
         Self {
-            recording_dir: "./recordings".to_string(), // sensible default?
-            video_duration: 2, // 2 second .ts files
-            video_width: 1920,
-            video_height: 1080,
-            frame_rate: 30,
+            recording_dir: RECORDING_DIR.to_string(), // sensible default?
+            video_duration: VIDEO_DURATION, // 2 second .ts files
+            video_width: VIDEO_WIDTH,
+            video_height: VIDEO_HEIGHT,
+            frame_rate: VIDEO_FRAMERATE,
         }
     }
 }
@@ -127,7 +130,7 @@ impl RecordingPipeline {
 
     pub fn start_pipeline(&mut self) -> Result<()> {
         if self.pipeline_thread.is_none() {
-            println!(
+            info!(
                 "Starting pipeline at {}",
                 chrono::Local::now().format("%m-%d-%Y %H:%M:%S")
             );
@@ -150,7 +153,7 @@ impl RecordingPipeline {
     }
 
     pub fn stop_pipeline(&mut self) -> Result<()> {
-        println!("Stopping pipeline");
+        info!("Stopping pipeline");
 
         if self.pipeline_running.load(Ordering::SeqCst) {
             self.pipeline_running.store(false, Ordering::SeqCst);
@@ -168,7 +171,7 @@ impl RecordingPipeline {
     fn pipeline_runner(pipeline: gst::Pipeline, pipeline_running: Arc<AtomicBool>) {
 
         match pipeline.set_state(gst::State::Playing) {
-            Ok(_) => println!("Pipeline state successfully set to PLAYING"),
+            Ok(_) => info!("Pipeline state successfully set to PLAYING"),
             Err(e) => {
                 eprintln!("❌ Failed to start pipeline: {}", e);
                 pipeline_running.store(false, Ordering::SeqCst);
@@ -178,21 +181,21 @@ impl RecordingPipeline {
 
         let bus = pipeline.bus().expect("Pipeline has no bus");
         loop {
-            if !Self::handle_bus_message(&bus) {
+            if !Self::handle_gstreamer_bus_message(&bus) {
                 break;
             }
 
             if !pipeline_running.load(Ordering::SeqCst) {
-                println!("Running flag set to false, exiting pipeline loop");
+                info!("Running flag set to false, exiting pipeline loop");
                 break;
             }
         }
 
         pipeline_running.store(false, Ordering::SeqCst);
-        println!("Pipeline thread exiting");
+        info!("Pipeline thread exiting");
     }
 
-    fn handle_bus_message(bus: &gst::Bus) -> bool {
+    fn handle_gstreamer_bus_message(bus: &gst::Bus) -> bool {
         use gst::MessageView;
 
         let msg = bus.timed_pop_filtered(
@@ -209,7 +212,7 @@ impl RecordingPipeline {
         if let Some(msg) = msg {
             match msg.view() {
                 MessageView::Eos(..) => {
-                    println!("End-Of-Stream reached");
+                    info!("End-Of-Stream reached");
                     continue_flag = false;
                 }
                 MessageView::Error(err) => {
@@ -219,7 +222,7 @@ impl RecordingPipeline {
                 MessageView::Element(element) => {
                     if let Some(structure) = element.structure() {
                         if structure.name() == "splitmuxsink-fragment-closed" {
-                            // println!("Fragment closed");
+                            // info!("Fragment closed");
                         }
                     }
                     continue_flag = true;

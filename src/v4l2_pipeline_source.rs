@@ -3,14 +3,11 @@ use std::{fs, thread, time::Duration};
 #[allow(dead_code)]
 
 use gstreamer as gst;
-use gstreamer::prelude::*;
+use gstreamer::{prelude::*};
 use anyhow::{Result, bail, Context, anyhow};
+use tracing::info;
 
 use crate::recording_pipeline::{PipelineSource, RecordingConfig};
-
-const FRAME_RATE: i32 = 30;
-const VIDEO_WIDTH: i32 = 1920;
-const VIDEO_HEIGHT: i32 = 1080;
 
 pub struct V4l2PipelineSource {
     config: RecordingConfig,
@@ -38,14 +35,14 @@ impl V4l2PipelineSource {
     }
 
     fn wait_for_video_device() -> Result<()> {
-        let devicePath = "/dev/video0"; // naive assume video0 here
+        let device_path = "/dev/video0"; // naive assume video0 here
         let mut i = 0;
-        while !fs::exists(devicePath)? {
+        while !fs::exists(device_path)? {
             if i >= 10 {
                 return Err(anyhow!("Device not found after 10 seconds"));
             }
 
-            println!("Waiting for /dev/video0/...");
+            info!("Waiting for /dev/video0/...");
             thread::sleep(Duration::from_secs(1));
             i = i+1;
         }
@@ -75,7 +72,7 @@ impl PipelineSource for V4l2PipelineSource {
     }
 
     fn setup_source(&mut self, pipeline: &gst::Pipeline) -> Result<()> {
-        println!("Creating gstreamer v4l2 source");
+        info!("Creating gstreamer v4l2 source");
         Self::wait_for_video_device()?;
 
         self.source = Some(gst::ElementFactory::make("v4l2src")
@@ -119,8 +116,6 @@ impl PipelineSource for V4l2PipelineSource {
         let capsfilter = self.capsfilter.as_ref().unwrap();
         let caps = gst::Caps::builder("video/x-raw")
             .field("format", "YUY2")
-            // .field("width", VIDEO_WIDTH)
-            // .field("height", VIDEO_HEIGHT)
             .field("width", 640)
             .field("height", 480)
             .field("framerate", gst::Fraction::new(10, 1))
@@ -150,7 +145,7 @@ impl PipelineSource for V4l2PipelineSource {
         ])
         .map_err(|_| anyhow::anyhow!("Failed to link gstreamer elements"))?;
 
-        println!("Finished setup of gstreamer v4l2 src");
+        info!("Finished setup of gstreamer v4l2 src");
 
         Ok(())
     }

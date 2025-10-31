@@ -3,12 +3,10 @@
 use gstreamer as gst;
 use gstreamer::prelude::*;
 use anyhow::{Result, bail, Context};
+use tracing::info;
 
 use crate::recording_pipeline::{PipelineSource, RecordingConfig};
-
-const FRAME_RATE: i32 = 30;
-const VIDEO_WIDTH: i32 = 1920;
-const VIDEO_HEIGHT: i32 = 1080;
+use crate::log;
 
 ///
 /// def
@@ -65,7 +63,7 @@ impl PipelineSource for LibcameraPipelineSource {
     }
 
     fn setup_source(&mut self, pipeline: &gst::Pipeline) -> Result<()> {
-        println!("Creating gstreamer libcamera source");
+        info!("Creating gstreamer libcamera source");
 
         self.source = Some(gst::ElementFactory::make("libcamerasrc")
             .name("source")
@@ -113,7 +111,7 @@ impl PipelineSource for LibcameraPipelineSource {
         encoder.set_property_from_str("tune", "zerolatency");  // Use string instead of int
         encoder.set_property_from_str("speed-preset", "ultrafast");  // Use string instead of int
         encoder.set_property("bitrate", 2000u32);
-        encoder.set_property("key-int-max", FRAME_RATE as u32);
+        encoder.set_property("key-int-max", self.config.frame_rate as u32);
 
         // Configure videoflip
         // let videoflip = self.videoflip.as_ref().unwrap();
@@ -156,7 +154,7 @@ impl PipelineSource for LibcameraPipelineSource {
         ])
         .map_err(|_| anyhow::anyhow!("Failed to link gstreamer elements"))?;
 
-        println!("Finished setup of gstreamer libcamera src");
+        info!("Finished setup of gstreamer libcamera src");
 
         Ok(())
     }

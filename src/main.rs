@@ -1,6 +1,7 @@
 use anyhow::Result;
 use signal_hook::consts::signal::*;
 use signal_hook::iterator::Signals;
+use tracing::info;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -11,12 +12,15 @@ mod libcamera_pipeline_source;
 mod ts_file_pipeline_sink;
 mod hls_pipeline_sink;
 mod cam_service;
-
+mod db;
+mod log;
+mod constants;
 
 use cam_service::CamService;
 
 fn main() -> Result<()> {
-    // Create CamService
+    log::setup_trace_logging();
+
     let mut cam_service = CamService::new()?;
     
     let running = cam_service.running.clone();
@@ -24,7 +28,7 @@ fn main() -> Result<()> {
     
     thread::spawn(move || {
         for sig in signals.forever() {
-            println!("Exiting cleanly. Received signal {}", sig);
+            info!("Exiting cleanly. Received signal {}", sig);
             running.store(false, Ordering::SeqCst);
             std::process::exit(sig);
         }
