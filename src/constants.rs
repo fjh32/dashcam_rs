@@ -17,7 +17,7 @@ pub const RECORDING_DIR: &str = "./recordings/";
 #[cfg(debug_assertions)]
 pub const RECORDING_SAVE_DIR: &str = "./recordings/save/";
 #[cfg(debug_assertions)]
-pub const SEGMENTS_TO_KEEP: i32 = 86400 / 2 * 2; // 2 days worth
+pub const SEGMENTS_TO_KEEP: i64 = 86400 / 2 * 2; // 2 days worth
 
 #[cfg(not(debug_assertions))]
 pub const VIDEO_DURATION: u64 = 2;
@@ -32,4 +32,4 @@ pub const RECORDING_DIR: &str = "/var/lib/dashcam/recordings/";
 #[cfg(not(debug_assertions))]
 pub const RECORDING_SAVE_DIR: &str = "/var/lib/dashcam/recordings/save/";
 #[cfg(not(debug_assertions))]
-pub const SEGMENTS_TO_KEEP: i32 = 86400 / 2 * 2; // 2 days worth
+pub const SEGMENTS_TO_KEEP: i64 = 86400 / 2 * 2; // 2 days worth

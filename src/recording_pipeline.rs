@@ -1,11 +1,10 @@
 #[allow(dead_code)]
-
 use anyhow::{Context, Result, bail};
 use gstreamer as gst;
 use gstreamer::prelude::*;
-use tracing::info;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use tracing::info;
 
 use crate::constants::*;
 
@@ -36,7 +35,7 @@ impl Default for RecordingConfig {
     fn default() -> Self {
         Self {
             recording_dir: RECORDING_DIR.to_string(), // sensible default?
-            video_duration: VIDEO_DURATION, // 2 second .ts files
+            video_duration: VIDEO_DURATION,           // 2 second .ts files
             video_width: VIDEO_WIDTH,
             video_height: VIDEO_HEIGHT,
             frame_rate: VIDEO_FRAMERATE,
@@ -169,7 +168,6 @@ impl RecordingPipeline {
     }
 
     fn pipeline_runner(pipeline: gst::Pipeline, pipeline_running: Arc<AtomicBool>) {
-
         match pipeline.set_state(gst::State::Playing) {
             Ok(_) => info!("Pipeline state successfully set to PLAYING"),
             Err(e) => {

@@ -1,10 +1,9 @@
 use std::{fs, thread, time::Duration};
 
+use anyhow::{Context, Result, anyhow, bail};
 #[allow(dead_code)]
-
 use gstreamer as gst;
-use gstreamer::{prelude::*};
-use anyhow::{Result, bail, Context, anyhow};
+use gstreamer::prelude::*;
 use tracing::info;
 
 use crate::recording_pipeline::{PipelineSource, RecordingConfig};
@@ -17,21 +16,21 @@ pub struct V4l2PipelineSource {
     videoconvert: Option<gst::Element>,
     encoder: Option<gst::Element>,
     parser: Option<gst::Element>,
-    tee: Option<gst::Element>
+    tee: Option<gst::Element>,
 }
 
 impl V4l2PipelineSource {
     pub fn new(config: RecordingConfig) -> Self {
         V4l2PipelineSource {
             config: config,
-            source: None, 
-            queue: None, 
-            capsfilter: None, 
-            videoconvert: None, 
-            encoder: None, 
-            parser: None, 
-            tee: None
-         }
+            source: None,
+            queue: None,
+            capsfilter: None,
+            videoconvert: None,
+            encoder: None,
+            parser: None,
+            tee: None,
+        }
     }
 
     fn wait_for_video_device() -> Result<()> {
@@ -44,7 +43,7 @@ impl V4l2PipelineSource {
 
             info!("Waiting for /dev/video0/...");
             thread::sleep(Duration::from_secs(1));
-            i = i+1;
+            i = i + 1;
         }
 
         Ok(())
@@ -59,56 +58,68 @@ impl Default for V4l2PipelineSource {
 
 impl PipelineSource for V4l2PipelineSource {
     fn get_source_pad(&self) -> Result<gst::Pad> {
-        let tee = self.tee.as_ref()
-            .context("Tee element not initialized")?;
-        
+        let tee = self.tee.as_ref().context("Tee element not initialized")?;
+
         tee.static_pad("src")
             .context("Failed to get static pad 'src' from tee")
     }
 
     fn get_tee(&self) -> Result<gst::Element> {
-        self.tee.clone()
-            .context("Tee element not initialized")
+        self.tee.clone().context("Tee element not initialized")
     }
 
     fn setup_source(&mut self, pipeline: &gst::Pipeline) -> Result<()> {
         info!("Creating gstreamer v4l2 source");
         Self::wait_for_video_device()?;
 
-        self.source = Some(gst::ElementFactory::make("v4l2src")
-                    .name("source")
-                    .build()
-                    .context("Failed to create libcamerasrc")?);
+        self.source = Some(
+            gst::ElementFactory::make("v4l2src")
+                .name("source")
+                .build()
+                .context("Failed to create libcamerasrc")?,
+        );
 
-        self.queue = Some(gst::ElementFactory::make("queue")
-            .name("queue")
-            .build()
-            .context("Failed to create queue")?);
+        self.queue = Some(
+            gst::ElementFactory::make("queue")
+                .name("queue")
+                .build()
+                .context("Failed to create queue")?,
+        );
 
-        self.capsfilter = Some(gst::ElementFactory::make("capsfilter")
-            .name("capsfilter")
-            .build()
-            .context("Failed to create capsfilter")?);
+        self.capsfilter = Some(
+            gst::ElementFactory::make("capsfilter")
+                .name("capsfilter")
+                .build()
+                .context("Failed to create capsfilter")?,
+        );
 
-        self.videoconvert = Some(gst::ElementFactory::make("videoconvert")
-            .name("videoconvert")
-            .build()
-            .context("Failed to create videoconvert")?);
+        self.videoconvert = Some(
+            gst::ElementFactory::make("videoconvert")
+                .name("videoconvert")
+                .build()
+                .context("Failed to create videoconvert")?,
+        );
 
-        self.encoder = Some(gst::ElementFactory::make("x264enc")
-            .name("encoder")
-            .build()
-            .context("Failed to create x264enc")?);
+        self.encoder = Some(
+            gst::ElementFactory::make("x264enc")
+                .name("encoder")
+                .build()
+                .context("Failed to create x264enc")?,
+        );
 
-        self.parser = Some(gst::ElementFactory::make("h264parse")
-            .name("h264parser")
-            .build()
-            .context("Failed to create h264parse")?);
+        self.parser = Some(
+            gst::ElementFactory::make("h264parse")
+                .name("h264parser")
+                .build()
+                .context("Failed to create h264parse")?,
+        );
 
-        self.tee = Some(gst::ElementFactory::make("tee")
-            .name("tee")
-            .build()
-            .context("Failed to create tee")?);
+        self.tee = Some(
+            gst::ElementFactory::make("tee")
+                .name("tee")
+                .build()
+                .context("Failed to create tee")?,
+        );
 
         let source = self.source.as_ref().unwrap();
         source.set_property_from_str("device", "/dev/video0");
@@ -120,19 +131,20 @@ impl PipelineSource for V4l2PipelineSource {
             .field("height", 480)
             .field("framerate", gst::Fraction::new(10, 1))
             .build();
-        
+
         capsfilter.set_property("caps", &caps);
 
-        pipeline.add_many(&[
-            self.source.as_ref().unwrap(),
-            self.queue.as_ref().unwrap(),
-            self.capsfilter.as_ref().unwrap(),
-            self.videoconvert.as_ref().unwrap(),
-            self.encoder.as_ref().unwrap(),
-            self.parser.as_ref().unwrap(),
-            self.tee.as_ref().unwrap()
-        ])
-        .context("Failed to add elements to v4l2 pipeline source")?;
+        pipeline
+            .add_many(&[
+                self.source.as_ref().unwrap(),
+                self.queue.as_ref().unwrap(),
+                self.capsfilter.as_ref().unwrap(),
+                self.videoconvert.as_ref().unwrap(),
+                self.encoder.as_ref().unwrap(),
+                self.parser.as_ref().unwrap(),
+                self.tee.as_ref().unwrap(),
+            ])
+            .context("Failed to add elements to v4l2 pipeline source")?;
 
         gst::Element::link_many(&[
             self.source.as_ref().unwrap(),
@@ -141,7 +153,7 @@ impl PipelineSource for V4l2PipelineSource {
             self.videoconvert.as_ref().unwrap(),
             self.encoder.as_ref().unwrap(),
             self.parser.as_ref().unwrap(),
-            self.tee.as_ref().unwrap()
+            self.tee.as_ref().unwrap(),
         ])
         .map_err(|_| anyhow::anyhow!("Failed to link gstreamer elements"))?;
 

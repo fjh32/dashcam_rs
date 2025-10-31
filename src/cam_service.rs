@@ -1,20 +1,20 @@
-use anyhow::{Result, Context};
-use tracing::{error, info};
-use std::sync::{Arc, Mutex};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::os::unix::net::{UnixListener, UnixStream};
-use std::io::{BufRead, BufReader, Write};
-use std::fs;
-use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use anyhow::{Context, Result};
 use regex::Regex;
+use std::fs;
+use std::io::{BufRead, BufReader, Write};
+use std::os::unix::net::{UnixListener, UnixStream};
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::{SystemTime, UNIX_EPOCH};
+use tracing::{error, info};
 
-use crate::recording_pipeline::{RecordingPipeline, RecordingConfig};
-use crate::v4l2_pipeline_source::V4l2PipelineSource;
-use crate::libcamera_pipeline_source::LibcameraPipelineSource;
-use crate::ts_file_pipeline_sink::TsFilePipelineSink;
 use crate::hls_pipeline_sink::HlsPipelineSink;
-use crate::{constants::*, log, db};
+use crate::libcamera_pipeline_source::LibcameraPipelineSource;
+use crate::recording_pipeline::{RecordingConfig, RecordingPipeline};
+use crate::ts_file_pipeline_sink::TsFilePipelineSink;
+use crate::v4l2_pipeline_source::V4l2PipelineSource;
+use crate::{constants::*, db, log};
 
 pub struct CamService {
     pub recording_pipeline: Arc<Mutex<RecordingPipeline>>,
@@ -44,10 +44,9 @@ impl CamService {
         let pipeline_arc = Arc::new(Mutex::new(pipeline));
 
         info!("Creating sinks BEFORE locking pipeline...");
-        
+
         #[cfg(not(feature = "rpi"))]
         let (source, ts_sink, hls_sink) = {
-
             info!("V4L2 MODE CamService");
             let source = Box::new(V4l2PipelineSource::new(config.clone()));
             let ts_sink = Box::new(TsFilePipelineSink::new_with_max_segments(
@@ -58,7 +57,7 @@ impl CamService {
             let hls_sink = Box::new(HlsPipelineSink::new(config.clone()));
             (source, ts_sink, hls_sink)
         };
-        
+
         #[cfg(feature = "rpi")]
         let (source, ts_sink, hls_sink) = {
             info!("RPI MODE CamService");
@@ -135,9 +134,7 @@ impl CamService {
 
     // TODO verify this
     fn save_recordings(&self, seconds_back_to_save: u64) -> Result<()> {
-        let current_time = SystemTime::now()
-            .duration_since(UNIX_EPOCH)?
-            .as_secs() as i64;
+        let current_time = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() as i64;
         let threshold_time = current_time - seconds_back_to_save as i64;
 
         let segment_pattern = Regex::new(r"output_(\d+)\.ts")?;
@@ -173,9 +170,7 @@ impl CamService {
 
                 // Check modification time
                 let metadata = file_entry.metadata()?;
-                let mtime = metadata.modified()?
-                    .duration_since(UNIX_EPOCH)?
-                    .as_secs() as i64;
+                let mtime = metadata.modified()?.duration_since(UNIX_EPOCH)?.as_secs() as i64;
 
                 if mtime > threshold_time {
                     candidates.push(file_entry.path());
@@ -206,8 +201,7 @@ impl CamService {
 
         // Copy files
         for src_path in candidates {
-            let filename = src_path.file_name()
-                .context("Invalid filename")?;
+            let filename = src_path.file_name().context("Invalid filename")?;
             let dst_path = Path::new(&timestamp_dir).join(filename);
 
             match fs::copy(&src_path, &dst_path) {
@@ -222,10 +216,8 @@ impl CamService {
         Ok(())
     }
 
-
     fn remove_listening_socket(&self) -> Result<()> {
-        fs::remove_file(SOCKET_PATH)
-            .context("Failed to remove Unix socket")?;
+        fs::remove_file(SOCKET_PATH).context("Failed to remove Unix socket")?;
         info!("Unix socket removed");
         Ok(())
     }
@@ -236,8 +228,7 @@ impl CamService {
         // Remove old socket if exists
         let _ = fs::remove_file(SOCKET_PATH);
 
-        let listener = UnixListener::bind(SOCKET_PATH)
-            .context("Failed to bind to Unix socket")?;
+        let listener = UnixListener::bind(SOCKET_PATH).context("Failed to bind to Unix socket")?;
 
         info!("Unix socket created at {}", SOCKET_PATH);
 
@@ -268,7 +259,6 @@ impl CamService {
         info!("Closing listen_on_socket()");
         Ok(())
     }
-
 
     ///
     /// STATES

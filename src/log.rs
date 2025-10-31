@@ -1,4 +1,4 @@
-use tracing::{Level};
+use tracing::Level;
 use tracing_subscriber::FmtSubscriber;
 
 pub fn setup_trace_logging() {
