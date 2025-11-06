@@ -25,17 +25,24 @@ pub fn start_db_worker(dbworker: DBWorker) -> JoinHandle<()> {
     let thread = std::thread::spawn(move || {
 
         loop {
-            if let Ok(segment_index) = dbworker.recvr.recv() {
-                trace!("DB Worker received segment_index={}", segment_index);
+            match dbworker.recvr.recv() {
+                Ok(segment_index) => {
+                    trace!("DB Worker received segment_index={}", segment_index);
 
-                if let Err(e) = dbworker
-                    .dbconn
-                    .update_segment_counters_from_index(segment_index)
-                {
-                    error!("DB Worker failed to update segment counters: {:#}", e);
+                    if let Err(e) = dbworker
+                        .dbconn
+                        .update_segment_counters_from_index(segment_index)
+                    {
+                        error!("DB Worker failed to update segment counters: {:#}", e);
+                    }
                 }
-            }
+                Err(err) => {
+                    trace!("DB Worker channel closed: {}. Exiting worker thread.", err);
+                    break;
+                }
         }
+}
+
 
     });
 

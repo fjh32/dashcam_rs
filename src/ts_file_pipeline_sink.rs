@@ -18,7 +18,7 @@ const MAX_SEGMENTS: i64 = 86400;
 
 pub struct TsFilePipelineSink {
     config: RecordingConfig,
-    db_worker_handle: JoinHandle<()>,
+    db_worker_handle: Option<JoinHandle<()>>,
     db_sender: Arc< Sender<i64> >,
     segment_index: Arc<AtomicI64>,
     max_segments: i64,
@@ -53,7 +53,7 @@ impl TsFilePipelineSink {
 
         Ok(TsFilePipelineSink {
             config,
-            db_worker_handle: handle,
+            db_worker_handle: Some(handle),
             db_sender: Arc::new( sender),
             segment_index: Arc::new(AtomicI64::new(segment_index)),
             max_segments,
@@ -149,14 +149,10 @@ impl PipelineSink for TsFilePipelineSink {
 
 impl Drop for TsFilePipelineSink {
     fn drop(&mut self) {
-        // Clean up tee pad if it exists
-        // if let Some(ref tee_pad) = self.tee_pad {
-        //     if let Ok(ctx) = self.context.lock() {
-        //         if let Ok(tee) = ctx.get_source_tee() {
-        //             tee.release_request_pad(tee_pad);
-        //         }
-        //     }
-        // }
+        // if let Some(handle) = self.db_worker_handle.take() {
+        //     let _ = handle.join();
+        // } 
+        // don't need this because an mpsc::channel() close will produce Err on recv() and exit db worker thread loop
     }
 }
 
