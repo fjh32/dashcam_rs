@@ -15,7 +15,6 @@ use tracing::{error, info};
 use crate::db;
 
 const MAX_SEGMENTS: i64 = 86400;
-const SEGMENT_INDEX_FILE: &str = "segment_index.txt";
 
 pub struct TsFilePipelineSink {
     config: RecordingConfig,
@@ -65,44 +64,6 @@ impl TsFilePipelineSink {
         })
     }
 
-    // Convert load and save segment index to disk into funcs that write over a pipe/channel
-    // and read/update sqlite database with segment_index
-    fn save_segment_index_to_disk(config: &RecordingConfig, segment_index: i64) -> Result<()> {
-        let path = PathBuf::from(&config.recording_dir).join(SEGMENT_INDEX_FILE);
-
-        let mut file = File::create(path).context("Failed to create segment index file")?;
-
-        write!(file, "{}", segment_index).context("Failed to write segment index")?;
-
-        Ok(())
-    }
-
-    fn load_current_segment_index_from_disk(config: &RecordingConfig, max_segments: i64) -> i64 {
-        let path = PathBuf::from(&config.recording_dir).join(SEGMENT_INDEX_FILE);
-
-        match File::open(&path) {
-            Ok(mut file) => {
-                let mut contents = String::new();
-                if file.read_to_string(&mut contents).is_ok() {
-                    if let Ok(value) = contents.trim().parse::<i64>() {
-                        if value >= 0 && value < max_segments {
-                            info!("Loaded segment index FROM FILE: {}", value);
-                            return value;
-                        } else {
-                            eprintln!(
-                                "Warning: Invalid segment index file contents. Defaulting to 0."
-                            );
-                        }
-                    }
-                }
-            }
-            Err(_) => {
-                error!("Segment index file not found. Starting from 0.");
-            }
-        }
-
-        0 // Default value
-    }
 }
 
 ////////////////////////////////////////////
@@ -156,21 +117,15 @@ impl PipelineSink for TsFilePipelineSink {
         let make_playlist = self.make_playlist;
         let db_sender = self.db_sender.clone();
 
-        // TODO rethink this format-location callback
+        // TODO rethink this format-location callback ?
         sink.connect("format-location", false, move |_args| {
             let current_index = segment_index.load(Ordering::SeqCst);
-            // saves to disk and db for now...
-            // let _ = TsFilePipelineSink::save_segment_index_to_disk(&config, current_index);
             let _ = db_sender.send(current_index);
-            //
-            // We do the SAVE here because AT THIS POINT IN TIME, ??
-            // we've just finished recording a segment and are ready to record another. 
-            // save the current segment index to indicate that segment has COMPLETED
 
             let filename = if make_playlist {
-                make_filename_with_playlist_closure(&config, current_index, max_segments)
+                make_filename_with_playlist_closure(&config, current_index)
             } else {
-                make_filename_closure(&config, current_index, max_segments)
+                make_filename_closure(&config, current_index)
             };
 
             let _ = segment_index.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |current| {
@@ -208,15 +163,9 @@ impl Drop for TsFilePipelineSink {
 // MAKE NEW FILENAMES for format-location gstreamer signal
 fn make_filename_closure(
     config: &RecordingConfig,
-    segment_index: i64,
-    max_segments: i64,
+    segment_index: i64
 ) -> String {
-    // Load current value
-    // let current_index = segment_index.load(Ordering::SeqCst);
     let current_index = segment_index;
-
-    // Do all the slow I/O work with the loaded value
-    
 
     let subdir = {
         let subdir_digits = current_index / 1000;
@@ -234,10 +183,9 @@ fn make_filename_closure(
 
 fn make_filename_with_playlist_closure(
     config: &RecordingConfig,
-    segment_index: i64,
-    max_segments: i64,
+    segment_index: i64
 ) -> String {
-    let ts_filepath = make_filename_closure(config, segment_index, max_segments);
+    let ts_filepath = make_filename_closure(config, segment_index);
     let ts_path = Path::new(&ts_filepath);
 
     let ts_filename = ts_path
