@@ -15,6 +15,9 @@ echo "📝 Installing systemd service..."
 sed "s|@USER@|$REAL_USER|g" dashcam_rs.service.template | sudo tee /etc/systemd/system/dashcam_rs.service > /dev/null
 sudo sed -i '/^\[Service\]/a RestartSec=10s' /etc/systemd/system/dashcam_rs.service
 
+echo "📦 Copying Database Stuff to $MAIN_DIR..."
+cp migrations/* $MAIN_DIR
+
 echo "📦 Installing binary to /usr/local/bin..."
 sudo cp target/release/dashcam_rs /usr/local/bin/
 

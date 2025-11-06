@@ -1,8 +1,10 @@
+use crate::log;
+use crate::recording_pipeline::{PipelineSink, RecordingConfig, RecordingPipeline};
+use anyhow::{Context, Result};
 use gstreamer as gst;
 use gstreamer::prelude::*;
-use anyhow::{Result, Context};
 use std::sync::{Arc, Mutex};
-use crate::recording_pipeline::{PipelineSink, RecordingConfig, RecordingPipeline};
+use tracing::info;
 
 pub struct HlsPipelineSink {
     config: RecordingConfig,
@@ -30,40 +32,48 @@ impl HlsPipelineSink {
 
 impl PipelineSink for HlsPipelineSink {
     fn get_sink_pad(&self) -> Result<gst::Pad> {
-        self.queue.as_ref()
+        self.queue
+            .as_ref()
             .context("Queue element not initialized")?
             .static_pad("sink")
             .context("Failed to get sink pad from queue")
     }
 
     fn get_sink_element(&self) -> Result<gst::Element> {
-        self.sink.clone()
-            .context("Sink element not initialized")
+        self.sink.clone().context("Sink element not initialized")
     }
 
     fn setup_sink(&mut self, pipeline: &gst::Pipeline) -> Result<()> {
-        println!("Creating HlsPipelineSink");
+        info!("Creating HlsPipelineSink");
 
         // Create elements
-        self.queue = Some(gst::ElementFactory::make("queue")
-            .name("hls_queue")
-            .build()
-            .context("Failed to create queue")?);
+        self.queue = Some(
+            gst::ElementFactory::make("queue")
+                .name("hls_queue")
+                .build()
+                .context("Failed to create queue")?,
+        );
 
-        self.parser = Some(gst::ElementFactory::make("h264parse")
-            .name("h264parse")
-            .build()
-            .context("Failed to create h264parse")?);
+        self.parser = Some(
+            gst::ElementFactory::make("h264parse")
+                .name("h264parse")
+                .build()
+                .context("Failed to create h264parse")?,
+        );
 
-        self.mux = Some(gst::ElementFactory::make("mpegtsmux")
-            .name("hlsmux")
-            .build()
-            .context("Failed to create mpegtsmux")?);
+        self.mux = Some(
+            gst::ElementFactory::make("mpegtsmux")
+                .name("hlsmux")
+                .build()
+                .context("Failed to create mpegtsmux")?,
+        );
 
-        self.sink = Some(gst::ElementFactory::make("hlssink")
-            .name("hlssink")
-            .build()
-            .context("Failed to create hlssink")?);
+        self.sink = Some(
+            gst::ElementFactory::make("hlssink")
+                .name("hlssink")
+                .build()
+                .context("Failed to create hlssink")?,
+        );
 
         let queue = self.queue.clone().unwrap();
         let parser = self.parser.clone().unwrap();
@@ -80,7 +90,7 @@ impl PipelineSink for HlsPipelineSink {
             // let recording_dir = self.config.recording_dir;
             (
                 format!("{}/livestream.m3u8", self.config.recording_dir),
-                format!("{}/segment%05d.ts", self.config.recording_dir)
+                format!("{}/segment%05d.ts", self.config.recording_dir),
             )
         };
 
@@ -98,14 +108,18 @@ impl PipelineSink for HlsPipelineSink {
         sink.set_property("playlist-root", &self.webroot);
 
         // Add elements to pipeline
-        pipeline.add_many(&[&queue, &parser, &mux, &sink])
+        pipeline
+            .add_many(&[&queue, &parser, &mux, &sink])
             .context("Failed to add HLS elements to pipeline")?;
 
         // Link elements
         gst::Element::link_many(&[&queue, &parser, &mux, &sink])
             .context("Failed to link HLS elements")?;
 
-        println!("HLS elements setup successfully. Web root: {}", self.webroot);
+        info!(
+            "HLS elements setup successfully. Web root: {}",
+            self.webroot
+        );
         Ok(())
     }
 }

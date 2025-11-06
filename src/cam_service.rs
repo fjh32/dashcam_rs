@@ -1,50 +1,20 @@
-use anyhow::{Result, Context};
-use std::sync::{Arc, Mutex};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::os::unix::net::{UnixListener, UnixStream};
-use std::io::{BufRead, BufReader, Write};
-use std::fs;
-use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use anyhow::{Context, Result};
 use regex::Regex;
+use std::fs;
+use std::io::{BufRead, BufReader, Write};
+use std::os::unix::net::{UnixListener, UnixStream};
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::{SystemTime, UNIX_EPOCH};
+use tracing::{error, info};
 
-use crate::recording_pipeline::{RecordingPipeline, RecordingConfig};
-use crate::v4l2_pipeline_source::V4l2PipelineSource;
-use crate::libcamera_pipeline_source::LibcameraPipelineSource;
-use crate::ts_file_pipeline_sink::TsFilePipelineSink;
 use crate::hls_pipeline_sink::HlsPipelineSink;
-
-const SOCKET_PATH: &str = "/tmp/dashcam.sock";
-
-#[cfg(debug_assertions)]
-const VIDEO_DURATION: u64 = 2;
-#[cfg(debug_assertions)]
-const VIDEO_WIDTH: i32 = 640;
-#[cfg(debug_assertions)]
-const VIDEO_HEIGHT: i32 = 480;
-#[cfg(debug_assertions)]
-const VIDEO_FRAMERATE: i32 = 10;
-#[cfg(debug_assertions)]
-const RECORDING_DIR: &str = "./recordings/";
-#[cfg(debug_assertions)]
-const RECORDING_SAVE_DIR: &str = "./recordings/save/";
-#[cfg(debug_assertions)]
-const SEGMENTS_TO_KEEP: i32 = 86400 / 2 * 2; // 2 days worth
-
-#[cfg(not(debug_assertions))]
-const VIDEO_DURATION: u64 = 2;
-#[cfg(not(debug_assertions))]
-const VIDEO_WIDTH: i32 = 1920;
-#[cfg(not(debug_assertions))]
-const VIDEO_HEIGHT: i32 = 1080;
-#[cfg(not(debug_assertions))]
-const VIDEO_FRAMERATE: i32 = 30;
-#[cfg(not(debug_assertions))]
-const RECORDING_DIR: &str = "/var/lib/dashcam/recordings/";
-#[cfg(not(debug_assertions))]
-const RECORDING_SAVE_DIR: &str = "/var/lib/dashcam/recordings/save/";
-#[cfg(not(debug_assertions))]
-const SEGMENTS_TO_KEEP: i32 = 86400 / 2 * 2; // 2 days worth
+use crate::libcamera_pipeline_source::LibcameraPipelineSource;
+use crate::recording_pipeline::{RecordingConfig, RecordingPipeline};
+use crate::ts_file_pipeline_sink::TsFilePipelineSink;
+use crate::v4l2_pipeline_source::V4l2PipelineSource;
+use crate::{constants::*, db, log};
 
 pub struct CamService {
     pub recording_pipeline: Arc<Mutex<RecordingPipeline>>,
@@ -55,7 +25,7 @@ pub struct CamService {
 
 impl CamService {
     pub fn new() -> Result<Self> {
-        println!("Creating CamService");
+        info!("Creating CamService");
 
         let recording_dir = RECORDING_DIR.to_string();
         let recording_save_dir = RECORDING_SAVE_DIR.to_string();
@@ -69,47 +39,38 @@ impl CamService {
             frame_rate: VIDEO_FRAMERATE,
         };
 
-        println!("Creating RecordingPipeline...");
+        info!("Creating RecordingPipeline...");
         let pipeline = RecordingPipeline::new(config.clone())?;
         let pipeline_arc = Arc::new(Mutex::new(pipeline));
 
-        println!("Creating sinks BEFORE locking pipeline...");
-        
+        info!("Creating sinks BEFORE locking pipeline...");
+
         #[cfg(not(feature = "rpi"))]
         let (source, ts_sink, hls_sink) = {
-
-            println!("V4L2 MODE CamService");
+            info!("V4L2 MODE CamService");
             let source = Box::new(V4l2PipelineSource::new(config.clone()));
-            let ts_sink = Box::new(TsFilePipelineSink::new_with_max_segments(
-                config.clone(),
-                false,
-                SEGMENTS_TO_KEEP,
-            ));
+            let ts_sink = Box::new(TsFilePipelineSink::new(config.clone(), SEGMENTS_TO_KEEP)?);
             let hls_sink = Box::new(HlsPipelineSink::new(config.clone()));
             (source, ts_sink, hls_sink)
         };
-        
+
         #[cfg(feature = "rpi")]
         let (source, ts_sink, hls_sink) = {
-            println!("RPI MODE CamService");
+            info!("RPI MODE CamService");
             let source = Box::new(LibcameraPipelineSource::new(config.clone()));
-            let ts_sink = Box::new(TsFilePipelineSink::new_with_max_segments(
-                config.clone(),
-                false,
-                SEGMENTS_TO_KEEP,
-            ));
+            let ts_sink = Box::new(TsFilePipelineSink::new(config.clone(), SEGMENTS_TO_KEEP)?);
             let hls_sink = Box::new(HlsPipelineSink::new(config.clone()));
             (source, ts_sink, hls_sink)
         };
 
-        println!("NOW locking pipeline to add source and sinks...");
+        info!("NOW locking pipeline to add source and sinks...");
         {
             let mut pipeline = pipeline_arc.lock().unwrap();
             pipeline.set_source(source);
             pipeline.add_sink(ts_sink);
             pipeline.add_sink(hls_sink);
         }
-        println!("Pipeline configured!");
+        info!("Pipeline configured!");
 
         let service = CamService {
             recording_pipeline: pipeline_arc,
@@ -119,13 +80,12 @@ impl CamService {
         };
 
         service.prep_dir_for_service()?;
-        // service.create_listening_socket()?;
 
         Ok(service)
     }
 
     pub fn main_loop(&mut self) -> Result<()> {
-        println!(
+        info!(
             "Starting CamService::main_loop() at {}",
             chrono::Local::now().format("%m-%d-%Y %H:%M:%S")
         );
@@ -138,15 +98,14 @@ impl CamService {
             pipeline.start_pipeline()?;
         }
 
-        // Listen on socket (blocking)
         self.listen_on_socket()?;
 
-        println!("Exiting main loop");
+        info!("Exiting main loop");
         Ok(())
     }
 
     pub fn kill_main_loop(&mut self) -> Result<()> {
-        println!("Killing main loop");
+        info!("Killing main loop");
         self.running.store(false, Ordering::SeqCst);
 
         {
@@ -156,17 +115,16 @@ impl CamService {
 
         self.remove_listening_socket()?;
 
-        println!(
+        info!(
             "Killed CamService at {}",
             chrono::Local::now().format("%m-%d-%Y %H:%M:%S")
         );
         Ok(())
     }
 
+    // TODO verify this
     fn save_recordings(&self, seconds_back_to_save: u64) -> Result<()> {
-        let current_time = SystemTime::now()
-            .duration_since(UNIX_EPOCH)?
-            .as_secs() as i64;
+        let current_time = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() as i64;
         let threshold_time = current_time - seconds_back_to_save as i64;
 
         let segment_pattern = Regex::new(r"output_(\d+)\.ts")?;
@@ -202,9 +160,7 @@ impl CamService {
 
                 // Check modification time
                 let metadata = file_entry.metadata()?;
-                let mtime = metadata.modified()?
-                    .duration_since(UNIX_EPOCH)?
-                    .as_secs() as i64;
+                let mtime = metadata.modified()?.duration_since(UNIX_EPOCH)?.as_secs() as i64;
 
                 if mtime > threshold_time {
                     candidates.push(file_entry.path());
@@ -214,7 +170,7 @@ impl CamService {
 
         // Trigger new video segment
         // Note: createNewVideo not implemented in RecordingPipeline yet
-        // You'll need to add this method
+        // I'll need to add this method
 
         // Sort candidates by modification time (newest first)
         candidates.sort_by(|a, b| {
@@ -227,7 +183,7 @@ impl CamService {
         let timestamp_dir = format!("{}{}/", self.recording_save_dir, current_time);
         fs::create_dir_all(&timestamp_dir)?;
 
-        println!(
+        info!(
             "Saving {} recent segments to {}",
             candidates.len(),
             timestamp_dir
@@ -235,13 +191,12 @@ impl CamService {
 
         // Copy files
         for src_path in candidates {
-            let filename = src_path.file_name()
-                .context("Invalid filename")?;
+            let filename = src_path.file_name().context("Invalid filename")?;
             let dst_path = Path::new(&timestamp_dir).join(filename);
 
             match fs::copy(&src_path, &dst_path) {
-                Ok(_) => println!("Saved file: {:?}", dst_path),
-                Err(e) => eprintln!(
+                Ok(_) => info!("Saved file: {:?}", dst_path),
+                Err(e) => error!(
                     "Warning: Failed to copy file from {:?} to {:?}: {}",
                     src_path, dst_path, e
                 ),
@@ -251,24 +206,21 @@ impl CamService {
         Ok(())
     }
 
-
     fn remove_listening_socket(&self) -> Result<()> {
-        fs::remove_file(SOCKET_PATH)
-            .context("Failed to remove Unix socket")?;
-        println!("Unix socket removed");
+        fs::remove_file(SOCKET_PATH).context("Failed to remove Unix socket")?;
+        info!("Unix socket removed");
         Ok(())
     }
 
     fn listen_on_socket(&self) -> Result<()> {
-        println!("Starting listen_on_socket()");
+        info!("Starting listen_on_socket()");
 
         // Remove old socket if exists
         let _ = fs::remove_file(SOCKET_PATH);
 
-        let listener = UnixListener::bind(SOCKET_PATH)
-            .context("Failed to bind to Unix socket")?;
+        let listener = UnixListener::bind(SOCKET_PATH).context("Failed to bind to Unix socket")?;
 
-        println!("Unix socket created at {}", SOCKET_PATH);
+        info!("Unix socket created at {}", SOCKET_PATH);
 
         listener.set_nonblocking(true)?;
 
@@ -277,9 +229,9 @@ impl CamService {
         while self.running.load(Ordering::SeqCst) {
             match listener.accept() {
                 Ok((stream, _addr)) => {
-                    println!("Got connection on socket");
+                    info!("Got connection on socket");
                     if let Err(e) = self.handle_connection(stream, &save_regex) {
-                        eprintln!("Error handling connection: {}", e);
+                        error!("Error handling connection: {}", e);
                     }
                 }
                 Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
@@ -287,16 +239,31 @@ impl CamService {
                     continue;
                 }
                 Err(e) => {
-                    eprintln!("Error accepting connection: {}", e);
+                    error!("Error accepting connection: {}", e);
                     std::thread::sleep(std::time::Duration::from_millis(100));
                     continue;
                 }
             }
         }
 
-        println!("Closing listen_on_socket()");
+        info!("Closing listen_on_socket()");
         Ok(())
     }
+
+    ///
+    /// STATES
+    /// ON Start, create new TRIP in DB with current segment index (retreive segment index and increment it)
+    ///     If the system crashed, the previous trip will have an unfilled value at FINAL_SEGMENT,
+    ///     If that is the case, fill that value with current segment index before incrementing it and creating a new trip.
+    /// HANDLE MESSAGES
+    /// MSG: NEW TRIP
+    ///     - edit current trip's row with FINAL_SEGMENT.
+    ///     - create new Trip row in table
+    /// MSG: SAVE TRIP
+    ///     - Same process as NEW TRIP
+    ///     - previous trip, save all files associated with the trip in save/ dir
+    ///     - Copy TRIP row from TRIPS table to SAVED_TRIPS table with dir to all saved videos.
+    ///     - stitch together all .ts files from trip into a single mp4 with ffmpeg
 
     fn handle_connection(&self, stream: UnixStream, save_regex: &Regex) -> Result<()> {
         let mut reader = BufReader::new(&stream);
@@ -305,7 +272,7 @@ impl CamService {
         reader.read_line(&mut message)?;
         let message = message.trim();
 
-        println!("Received message on socket: {}", message);
+        info!("Received message on socket: {}", message);
 
         if message == "kill" {
             // Note: This is tricky - we're in a borrowed context
@@ -354,7 +321,7 @@ impl CamService {
 
 impl Drop for CamService {
     fn drop(&mut self) {
-        println!("Dropping CamService");
+        info!("Dropping CamService");
         let _ = self.kill_main_loop();
     }
 }

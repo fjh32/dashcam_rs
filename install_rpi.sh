@@ -11,15 +11,17 @@ sudo chown -R "$USER:$USER" "$RECORDINGS_DIR"
 echo "Building..."
 cargo build --release --features rpi -j 1 # -j 1 for 1 core - rpi 0 is hamstrung
 
-echo "📝 Installing systemd service..."
+echo "📦 Installing systemd service..."
 sed "s|@USER@|$REAL_USER|g" dashcam_rs.service.template | sudo tee /etc/systemd/system/dashcam_rs.service > /dev/null
 
+echo "📦 Copying Database Stuff to $MAIN_DIR..."
+cp migrations/* $MAIN_DIR
 
 echo "📦 Installing binary to /usr/local/bin..."
 sudo cp target/release/dashcam_rs /usr/local/bin/
 
 # Reload and start systemd service
-echo "🔄 Reloading and enabling service..."
+echo "📦 Reloading and enabling service..."
 sudo systemctl daemon-reload
 sudo systemctl stop dashcam.service
 sudo systemctl disable dashcam.service
@@ -27,7 +29,7 @@ sudo systemctl enable dashcam_rs.service
 sudo systemctl restart dashcam_rs.service
 
 echo
-echo "✅ Installation complete."
+echo "📦 Installation complete."
 echo "You can check the status of the service with:"
 echo "  sudo systemctl status dashcam_rs.service"
 echo
