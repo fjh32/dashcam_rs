@@ -2,7 +2,7 @@ use crate::{constants::*, log};
 use rusqlite::{params, Connection, OptionalExtension};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Clone)]
 pub struct Trip {
@@ -37,6 +37,7 @@ impl DashcamDb {
         }
         let db = Self::open(db_path)?;
         db.run_schema(schema_sql)?;
+        db.ensure_counters_initialized()?;
         db.clamp_segment_index()?;
         db.mark_fully_evicted_trips()?;
         Ok(db)
@@ -64,7 +65,9 @@ impl DashcamDb {
             .expect("Failed to read schema file");
 
         db.run_schema(&schema_sql)?;
+        db.ensure_counters_initialized()?;
         db.clamp_segment_index()?; // keep ring index in range if constant changed
+        db.mark_fully_evicted_trips()?;
         Ok(db)
     }
 
@@ -74,6 +77,7 @@ impl DashcamDb {
         conn.pragma_update(None, "synchronous", &"NORMAL")?;
         conn.pragma_update(None, "foreign_keys", &"ON")?;
         conn.pragma_update(None, "temp_store", &"MEMORY")?;
+        conn.busy_timeout(Duration::from_millis(100))?;
         Ok(Self { conn })
     }
 
@@ -90,9 +94,20 @@ impl DashcamDb {
             .as_secs() as i64
     }
 
-    // ---- counters & ring ----
+    pub fn ensure_counters_initialized(&self) -> rusqlite::Result<()> {
+        self.conn.execute_batch(
+            "
+            INSERT OR IGNORE INTO counters (name, value) VALUES
+            ('segment_index', 0),
+            ('segment_generation', 0),
+            ('absolute_segments', 0);
+            "
+        )?;
+        Ok(())
+    }
 
-    pub fn current_segment_index(&self) -> rusqlite::Result<i64> {
+    
+    pub fn get_segment_index(&self) -> rusqlite::Result<i64> {
         self.conn.query_row(
             "SELECT value FROM counters WHERE name='segment_index';",
             [],
@@ -100,7 +115,7 @@ impl DashcamDb {
         )
     }
 
-    pub fn current_generation(&self) -> rusqlite::Result<i64> {
+    pub fn get_segment_generation(&self) -> rusqlite::Result<i64> {
         self.conn.query_row(
             "SELECT value FROM counters WHERE name='segment_generation';",
             [],
@@ -108,7 +123,7 @@ impl DashcamDb {
         )
     }
 
-    pub fn current_absolute_segments(&self) -> rusqlite::Result<i64> {
+    pub fn get_absolute_segments(&self) -> rusqlite::Result<i64> {
         self.conn.query_row(
             "SELECT value FROM counters WHERE name='absolute_segments';",
             [],
@@ -116,6 +131,102 @@ impl DashcamDb {
         )
     }
 
+    // ====== SETTERS ======
+    pub fn set_segment_index(&self, value: i64) -> rusqlite::Result<()> {
+        self.conn.execute(
+            "UPDATE counters SET value=? WHERE name='segment_index';",
+            params![value],
+        )?;
+        Ok(())
+    }
+
+    pub fn set_segment_generation(&self, value: i64) -> rusqlite::Result<()> {
+        self.conn.execute(
+            "UPDATE counters SET value=? WHERE name='segment_generation';",
+            params![value],
+        )?;
+        Ok(())
+    }
+
+    pub fn set_absolute_segments(&self, value: i64) -> rusqlite::Result<()> {
+        self.conn.execute(
+            "UPDATE counters SET value=? WHERE name='absolute_segments';",
+            params![value],
+        )?;
+        Ok(())
+    }
+
+    /// Update segment_index, segment_generation, and absolute_segments
+    /// based on a new segment_index coming from the pipeline.
+    ///
+    /// Assumptions:
+    /// - `new_segment_index` is the current in-memory index managed by ts_file_pipeline_sink.
+    /// - It advances by 1 each new segment, wrapping at SEGMENTS_TO_KEEP.
+    pub fn update_segment_counters_from_index(&self, new_segment_index: i64) -> rusqlite::Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+
+        let cur_idx: i64 = tx.query_row(
+            "SELECT value FROM counters WHERE name='segment_index';",
+            [],
+            |r| r.get(0),
+        )?;
+
+        let cur_gen: i64 = tx.query_row(
+            "SELECT value FROM counters WHERE name='segment_generation';",
+            [],
+            |r| r.get(0),
+        )?;
+
+        let cur_abs: i64 = tx.query_row(
+            "SELECT value FROM counters WHERE name='absolute_segments';",
+            [],
+            |r| r.get(0),
+        )?;
+
+        // If DB already matches, nothing to do.
+        if new_segment_index == cur_idx {
+            tx.commit()?;
+            return Ok(());
+        }
+
+        let max = SEGMENTS_TO_KEEP as i64;
+
+        // Determine if we wrapped: e.g. 86399 -> 0 with SEGMENTS_TO_KEEP = 86400
+        let wrapped = new_segment_index < cur_idx;
+
+        // How many segments did we advance?
+        // non-wrapped: diff = new_segment_index - cur_idx
+        // wrapped:     diff = (max - cur_idx) + new_segment_index
+        let diff = if wrapped {
+            (max - cur_idx) + new_segment_index
+        } else {
+            new_segment_index - cur_idx
+        };
+
+        // Update segment_index to the new value from the pipeline
+        tx.execute(
+            "UPDATE counters SET value=? WHERE name='segment_index';",
+            params![new_segment_index],
+        )?;
+
+        // If we wrapped, bump generation
+        if wrapped {
+            tx.execute(
+                "UPDATE counters SET value=? WHERE name='segment_generation';",
+                params![cur_gen + 1],
+            )?;
+        }
+
+        // absolute_segments always increases by 'diff'
+        tx.execute(
+            "UPDATE counters SET value=? WHERE name='absolute_segments';",
+            params![cur_abs + diff],
+        )?;
+
+        tx.commit()?;
+        Ok(())
+    }
+    
     /// Increment ring index and bump generation/absolute atomically.
     /// Returns new ring index (post-increment).
     pub fn increment_segment_index(&self) -> rusqlite::Result<i64> {
@@ -242,7 +353,7 @@ impl DashcamDb {
         end_clock_source: &str,
     ) -> rusqlite::Result<()> {
         let now = Self::now();
-        let cur_gen: i64 = self.current_generation()?;
+        let cur_gen: i64 = self.get_segment_generation()?;
         self.conn.execute(
             "UPDATE trips
              SET final_segment = ?, end_time_utc = ?, end_clock_source = ?, end_gen = ?
@@ -259,7 +370,7 @@ impl DashcamDb {
         start_clock_source: &str,
     ) -> rusqlite::Result<Trip> {
         let now = Self::now();
-        let start_gen: i64 = self.current_generation()?;
+        let start_gen: i64 = self.get_segment_generation()?;
         self.conn.execute(
             "INSERT INTO trips(boot_id, start_time_utc, start_segment, start_clock_source, start_gen)
              VALUES(?, ?, ?, ?, ?);",

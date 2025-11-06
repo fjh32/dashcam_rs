@@ -16,7 +16,7 @@ fn it_creates_and_migrates() {
     let db_path = tmp.path().join("db.sqlite");
     let db = DashcamDb::setup_with_paths_and_schema(&db_path, SCHEMA_SQL).unwrap();
 
-    let idx = db.current_segment_index().unwrap();
+    let idx = db.get_segment_index().unwrap();
     assert_eq!(idx, 0, "fresh DB should start at index 0");
 }
 
@@ -46,11 +46,11 @@ fn increment_wraps_and_bumps_generation() {
     for _ in 0..(SEGMENTS_TO_KEEP - 1) {
         db.increment_segment_index().unwrap();
     }
-    let before_gen = db.current_generation().unwrap();
+    let before_gen = db.get_segment_generation().unwrap();
 
     // Next increment should wrap to 0 and bump generation
     let idx = db.increment_segment_index().unwrap();
-    let after_gen = db.current_generation().unwrap();
+    let after_gen = db.get_segment_generation().unwrap();
 
     assert_eq!(idx, 0, "index should wrap to 0");
     assert_eq!(after_gen, before_gen + 1, "generation should increment on wrap");
@@ -67,7 +67,7 @@ fn eviction_flag_logic_marks_old_trips() {
     for _ in 0..5 { db.increment_segment_index().unwrap(); }
 
     // Close it at current-1
-    let current = db.current_segment_index().unwrap();
+    let current = db.get_segment_index().unwrap();
     db.finalize_open_trip(current - 1, "rtc").unwrap();
 
     // Write more than a full ring to guarantee eviction

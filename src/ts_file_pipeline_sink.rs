@@ -1,3 +1,4 @@
+use crate::db_worker::{self, DBWorker};
 use crate::recording_pipeline::{PipelineSink, RecordingConfig, RecordingPipeline};
 use anyhow::{Context, Result};
 use gstreamer as gst;
@@ -7,26 +8,29 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::mpsc::{Receiver, Sender, channel};
+use std::thread::JoinHandle;
 use tracing::{error, info};
+
+use crate::db;
 
 const MAX_SEGMENTS: i64 = 86400;
 const SEGMENT_INDEX_FILE: &str = "segment_index.txt";
 
 pub struct TsFilePipelineSink {
-    // context: Arc<Mutex<RecordingPipeline>>,
     config: RecordingConfig,
+    db_worker_handle: JoinHandle<()>,
+    db_sender: Arc< Sender<i64> >,
     segment_index: Arc<AtomicI64>,
     max_segments: i64,
     make_playlist: bool,
     queue: Option<gst::Element>,
     muxer: Option<gst::Element>,
     sink: Option<gst::Element>,
-    // create DB handler struct that encapsulates db connection
-    // with db methods and add as property here
 }
 
 impl TsFilePipelineSink {
-    pub fn new(config: RecordingConfig, make_playlist: bool) -> Self {
+    pub fn new(config: RecordingConfig, make_playlist: bool) -> Result<Self> {
         Self::new_with_max_segments(config, make_playlist, MAX_SEGMENTS)
     }
 
@@ -34,17 +38,31 @@ impl TsFilePipelineSink {
         config: RecordingConfig,
         make_playlist: bool,
         max_segments: i64,
-    ) -> Self {
-        let segment_index = Self::load_current_segment_index_from_disk(&config, max_segments);
-        TsFilePipelineSink {
+    ) -> Result<Self> {
+
+        let (sender, recvr) = channel::<i64>();
+        let db_worker = DBWorker::new(recvr)?;
+
+        // TODO load this from DB, track it in our variable, call updates to it in db from our variable over channel
+        let segment_index = match db_worker.dbconn.get_segment_index() {
+            Ok(val) => val,
+            Err(_) => 0
+        };
+
+        let handle = db_worker::start_db_worker(db_worker);
+
+
+        Ok(TsFilePipelineSink {
             config,
+            db_worker_handle: handle,
+            db_sender: Arc::new( sender),
             segment_index: Arc::new(AtomicI64::new(segment_index)),
             max_segments,
             make_playlist,
             queue: None,
             muxer: None,
             sink: None,
-        }
+        })
     }
 
     // Convert load and save segment index to disk into funcs that write over a pipe/channel
@@ -68,7 +86,7 @@ impl TsFilePipelineSink {
                 if file.read_to_string(&mut contents).is_ok() {
                     if let Ok(value) = contents.trim().parse::<i64>() {
                         if value >= 0 && value < max_segments {
-                            info!("Loaded segment index: {}", value);
+                            info!("Loaded segment index FROM FILE: {}", value);
                             return value;
                         } else {
                             eprintln!(
@@ -136,13 +154,29 @@ impl PipelineSink for TsFilePipelineSink {
         let segment_index = self.segment_index.clone();
         let max_segments = self.max_segments;
         let make_playlist = self.make_playlist;
+        let db_sender = self.db_sender.clone();
 
+        // TODO rethink this format-location callback
         sink.connect("format-location", false, move |_args| {
+            let current_index = segment_index.load(Ordering::SeqCst);
+            // saves to disk and db for now...
+            // let _ = TsFilePipelineSink::save_segment_index_to_disk(&config, current_index);
+            let _ = db_sender.send(current_index);
+            //
+            // We do the SAVE here because AT THIS POINT IN TIME, ??
+            // we've just finished recording a segment and are ready to record another. 
+            // save the current segment index to indicate that segment has COMPLETED
+
             let filename = if make_playlist {
-                make_filename_with_playlist_closure(&config, &segment_index, max_segments)
+                make_filename_with_playlist_closure(&config, current_index, max_segments)
             } else {
-                make_filename_closure(&config, &segment_index, max_segments)
+                make_filename_closure(&config, current_index, max_segments)
             };
+
+            let _ = segment_index.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |current| {
+                let next = current + 1;
+                Some(if next >= max_segments { 0 } else { next })
+            });
             Some(filename.to_value())
         });
 
@@ -174,14 +208,15 @@ impl Drop for TsFilePipelineSink {
 // MAKE NEW FILENAMES for format-location gstreamer signal
 fn make_filename_closure(
     config: &RecordingConfig,
-    segment_index: &Arc<AtomicI64>,
+    segment_index: i64,
     max_segments: i64,
 ) -> String {
     // Load current value
-    let current_index = segment_index.load(Ordering::SeqCst);
+    // let current_index = segment_index.load(Ordering::SeqCst);
+    let current_index = segment_index;
 
     // Do all the slow I/O work with the loaded value
-    let _ = TsFilePipelineSink::save_segment_index_to_disk(config, current_index);
+    
 
     let subdir = {
         let subdir_digits = current_index / 1000;
@@ -194,18 +229,12 @@ fn make_filename_closure(
     let ts_filepath = PathBuf::from(&subdir).join(&ts_filename);
     let ts_filepath_str = ts_filepath.to_string_lossy().to_string();
 
-    // Increment at the end with wraparound
-    let _ = segment_index.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |current| {
-        let next = current + 1;
-        Some(if next >= max_segments { 0 } else { next })
-    });
-
     ts_filepath_str
 }
 
 fn make_filename_with_playlist_closure(
     config: &RecordingConfig,
-    segment_index: &Arc<AtomicI64>,
+    segment_index: i64,
     max_segments: i64,
 ) -> String {
     let ts_filepath = make_filename_closure(config, segment_index, max_segments);

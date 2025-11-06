@@ -15,6 +15,7 @@ mod log;
 mod recording_pipeline;
 mod ts_file_pipeline_sink;
 mod v4l2_pipeline_source;
+mod db_worker;
 
 use cam_service::CamService;
 

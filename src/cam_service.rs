@@ -53,7 +53,7 @@ impl CamService {
                 config.clone(),
                 false,
                 SEGMENTS_TO_KEEP,
-            ));
+            )?);
             let hls_sink = Box::new(HlsPipelineSink::new(config.clone()));
             (source, ts_sink, hls_sink)
         };
@@ -66,7 +66,7 @@ impl CamService {
                 config.clone(),
                 false,
                 SEGMENTS_TO_KEEP,
-            ));
+            )?);
             let hls_sink = Box::new(HlsPipelineSink::new(config.clone()));
             (source, ts_sink, hls_sink)
         };
@@ -88,7 +88,6 @@ impl CamService {
         };
 
         service.prep_dir_for_service()?;
-        // service.create_listening_socket()?;
 
         Ok(service)
     }
@@ -107,7 +106,6 @@ impl CamService {
             pipeline.start_pipeline()?;
         }
 
-        // Listen on socket (blocking)
         self.listen_on_socket()?;
 
         info!("Exiting main loop");
