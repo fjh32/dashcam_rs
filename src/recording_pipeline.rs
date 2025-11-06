@@ -34,8 +34,8 @@ pub struct RecordingConfig {
 impl Default for RecordingConfig {
     fn default() -> Self {
         Self {
-            recording_dir: RECORDING_DIR.to_string(), // sensible default?
-            video_duration: VIDEO_DURATION,           // 2 second .ts files
+            recording_dir: RECORDING_DIR.to_string(),
+            video_duration: VIDEO_DURATION,
             video_width: VIDEO_WIDTH,
             video_height: VIDEO_HEIGHT,
             frame_rate: VIDEO_FRAMERATE,

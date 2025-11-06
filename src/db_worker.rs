@@ -1,12 +1,16 @@
-use std::{os::unix::thread, sync::{Arc, mpsc::Receiver}, thread::{JoinHandle, Thread}};
 use anyhow::Result;
+use std::{
+    os::unix::thread,
+    sync::{Arc, mpsc::Receiver},
+    thread::{JoinHandle},
+};
 use tracing::{error, info, trace};
 
 use crate::db;
 
 pub struct DBWorker {
     pub recvr: Receiver<i64>,
-    pub dbconn: db::DashcamDb
+    pub dbconn: db::DashcamDb,
 }
 
 impl DBWorker {
@@ -15,15 +19,13 @@ impl DBWorker {
 
         Ok(DBWorker {
             recvr: recvr,
-            dbconn: dbconn
+            dbconn: dbconn,
         })
     }
 }
 
 pub fn start_db_worker(dbworker: DBWorker) -> JoinHandle<()> {
-    
     let thread = std::thread::spawn(move || {
-
         loop {
             match dbworker.recvr.recv() {
                 Ok(segment_index) => {
@@ -40,10 +42,8 @@ pub fn start_db_worker(dbworker: DBWorker) -> JoinHandle<()> {
                     trace!("DB Worker channel closed: {}. Exiting worker thread.", err);
                     break;
                 }
+            }
         }
-}
-
-
     });
 
     thread

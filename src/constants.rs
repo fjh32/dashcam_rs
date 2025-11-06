@@ -4,6 +4,7 @@ pub const MAIN_DIR: &str = "/var/lib/dashcam/";
 pub const DB_PATH: &str = "/var/lib/dashcam/dashcam.db";
 pub const SCHEMA_PATH: &str = "/var/lib/dashcam/0001_init.sql";
 
+// DEBUG
 #[cfg(debug_assertions)]
 pub const VIDEO_DURATION: u64 = 2;
 #[cfg(debug_assertions)]
@@ -19,6 +20,7 @@ pub const RECORDING_SAVE_DIR: &str = "./recordings/save/";
 #[cfg(debug_assertions)]
 pub const SEGMENTS_TO_KEEP: i64 = 86400 / 2 * 2; // 2 days worth
 
+// RELEASE
 #[cfg(not(debug_assertions))]
 pub const VIDEO_DURATION: u64 = 2;
 #[cfg(not(debug_assertions))]

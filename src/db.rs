@@ -1,5 +1,5 @@
 use crate::{constants::*, log};
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{Connection, OptionalExtension, params};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -43,12 +43,14 @@ impl DashcamDb {
         Ok(db)
     }
 
-    pub fn setup_with_paths_and_schema_file<P: AsRef<std::path::Path>, Q: AsRef<std::path::Path>>(
+    pub fn setup_with_paths_and_schema_file<
+        P: AsRef<std::path::Path>,
+        Q: AsRef<std::path::Path>,
+    >(
         db_path: P,
         schema_path: Q,
     ) -> rusqlite::Result<Self> {
-        let schema_sql = std::fs::read_to_string(&schema_path)
-            .expect("Failed to read schema file");
+        let schema_sql = std::fs::read_to_string(&schema_path).expect("Failed to read schema file");
         Self::setup_with_paths_and_schema(db_path, &schema_sql)
     }
 
@@ -61,8 +63,7 @@ impl DashcamDb {
 
         let db = Self::open(DB_PATH)?;
 
-        let schema_sql = fs::read_to_string(SCHEMA_PATH)
-            .expect("Failed to read schema file");
+        let schema_sql = fs::read_to_string(SCHEMA_PATH).expect("Failed to read schema file");
 
         db.run_schema(&schema_sql)?;
         db.ensure_counters_initialized()?;
@@ -101,12 +102,11 @@ impl DashcamDb {
             ('segment_index', 0),
             ('segment_generation', 0),
             ('absolute_segments', 0);
-            "
+            ",
         )?;
         Ok(())
     }
 
-    
     pub fn get_segment_index(&self) -> rusqlite::Result<i64> {
         self.conn.query_row(
             "SELECT value FROM counters WHERE name='segment_index';",
@@ -162,7 +162,10 @@ impl DashcamDb {
     /// Assumptions:
     /// - `new_segment_index` is the current in-memory index managed by ts_file_pipeline_sink.
     /// - It advances by 1 each new segment, wrapping at SEGMENTS_TO_KEEP.
-    pub fn update_segment_counters_from_index(&self, new_segment_index: i64) -> rusqlite::Result<()> {
+    pub fn update_segment_counters_from_index(
+        &self,
+        new_segment_index: i64,
+    ) -> rusqlite::Result<()> {
         let tx = self.conn.unchecked_transaction()?;
 
         let cur_idx: i64 = tx.query_row(
@@ -226,7 +229,7 @@ impl DashcamDb {
         tx.commit()?;
         Ok(())
     }
-    
+
     /// Increment ring index and bump generation/absolute atomically.
     /// Returns new ring index (post-increment).
     pub fn increment_segment_index(&self) -> rusqlite::Result<i64> {
@@ -285,7 +288,7 @@ impl DashcamDb {
 
     /// Mark trips whose files are certainly overwritten by the ring.
     /// Uses absolute_segments to be robust to SEGMENTS_TO_KEEP changes.
-    /// 
+    ///
     /// Call this function on a schedule or every so often somewhere else....
     pub fn mark_fully_evicted_trips(&self) -> rusqlite::Result<usize> {
         let tx = self.conn.unchecked_transaction()?;
@@ -468,9 +471,8 @@ impl DashcamDb {
         &self,
         boot_id: &str,
         clock_src: &str,
-        saved_dir: &str)
-        // returns (new_trip, closed_trip_id, closed_start, closed_end)
-        -> rusqlite::Result<(Trip, i64, i64, i64)> {
+        saved_dir: &str,
+    ) -> rusqlite::Result<(Trip, i64, i64, i64)> {
         let tx = self.conn.unchecked_transaction()?;
 
         let current: i64 = tx.query_row(
@@ -544,18 +546,22 @@ impl DashcamDb {
     /// Fast check for a single trip’s eviction status using absolute_segments.
     pub fn is_trip_fully_evicted(&self, trip_id: i64) -> rusqlite::Result<bool> {
         // Single-row pull; short-circuit if already flagged or still open.
-        let (abs_latest, fully_evicted, final_seg_opt, end_gen_or_start): (i64, bool, Option<i64>, i64) =
-            self.conn.query_row(
-                "SELECT
+        let (abs_latest, fully_evicted, final_seg_opt, end_gen_or_start): (
+            i64,
+            bool,
+            Option<i64>,
+            i64,
+        ) = self.conn.query_row(
+            "SELECT
                      (SELECT value FROM counters WHERE name='absolute_segments') AS abs_latest,
                      t.fully_evicted,
                      t.final_segment,
                      COALESCE(t.end_gen, t.start_gen)
                  FROM trips t
                  WHERE t.id = ?1;",
-                params![trip_id],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
-            )?;
+            params![trip_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )?;
 
         if fully_evicted {
             return Ok(true);

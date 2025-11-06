@@ -9,13 +9,13 @@ use tracing::info;
 mod cam_service;
 mod constants;
 mod db;
+mod db_worker;
 mod hls_pipeline_sink;
 mod libcamera_pipeline_source;
 mod log;
 mod recording_pipeline;
 mod ts_file_pipeline_sink;
 mod v4l2_pipeline_source;
-mod db_worker;
 
 use cam_service::CamService;
 

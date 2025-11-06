@@ -49,11 +49,7 @@ impl CamService {
         let (source, ts_sink, hls_sink) = {
             info!("V4L2 MODE CamService");
             let source = Box::new(V4l2PipelineSource::new(config.clone()));
-            let ts_sink = Box::new(TsFilePipelineSink::new_with_max_segments(
-                config.clone(),
-                false,
-                SEGMENTS_TO_KEEP,
-            )?);
+            let ts_sink = Box::new(TsFilePipelineSink::new(config.clone(), SEGMENTS_TO_KEEP)?);
             let hls_sink = Box::new(HlsPipelineSink::new(config.clone()));
             (source, ts_sink, hls_sink)
         };
@@ -62,11 +58,7 @@ impl CamService {
         let (source, ts_sink, hls_sink) = {
             info!("RPI MODE CamService");
             let source = Box::new(LibcameraPipelineSource::new(config.clone()));
-            let ts_sink = Box::new(TsFilePipelineSink::new_with_max_segments(
-                config.clone(),
-                false,
-                SEGMENTS_TO_KEEP,
-            )?);
+            let ts_sink = Box::new(TsFilePipelineSink::new(config.clone(), SEGMENTS_TO_KEEP)?);
             let hls_sink = Box::new(HlsPipelineSink::new(config.clone()));
             (source, ts_sink, hls_sink)
         };
@@ -178,7 +170,7 @@ impl CamService {
 
         // Trigger new video segment
         // Note: createNewVideo not implemented in RecordingPipeline yet
-        // You'll need to add this method
+        // I'll need to add this method
 
         // Sort candidates by modification time (newest first)
         candidates.sort_by(|a, b| {
