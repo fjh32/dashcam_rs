@@ -95,38 +95,6 @@ impl RecordingPipeline {
         &self.config
     }
 
-    /// Setup the GStreamer Pipeline
-    /// - Setup 1 Source
-    /// - Setup multiple Sinks
-    /// - Connect Source Tee to each Sink via Pads
-    fn build_pipeline(&mut self) -> Result<()> {
-        let source = self.source.as_mut().context("No source set for pipeline")?;
-
-        if self.sinks.is_empty() {
-            anyhow::bail!("No sinks added to pipeline");
-        }
-
-        source.setup_source(&self.pipeline)?;
-
-        for sink in &mut self.sinks {
-            sink.setup_sink(&self.pipeline)?;
-        }
-
-        let source_tee = source.get_tee()?;
-        for sink in &self.sinks {
-            let tee_src_pad = source_tee
-                .request_pad_simple("src_%u")
-                .context("Failed to request pad from tee")?;
-            let sink_pad = sink.get_sink_pad()?;
-
-            tee_src_pad
-                .link(&sink_pad)
-                .context("Failed to link tee to sink")?;
-        }
-
-        Ok(())
-    }
-
     pub fn start_pipeline(&mut self) -> Result<()> {
         if self.pipeline_thread.is_none() {
             info!(
@@ -164,6 +132,38 @@ impl RecordingPipeline {
             }
             self.pipeline.set_state(gst::State::Null)?;
         }
+        Ok(())
+    }
+
+    /// Setup the GStreamer Pipeline
+    /// - Setup 1 Source
+    /// - Setup multiple Sinks
+    /// - Connect Source Tee to each Sink via Pads
+    fn build_pipeline(&mut self) -> Result<()> {
+        let source = self.source.as_mut().context("No source set for pipeline")?;
+
+        if self.sinks.is_empty() {
+            anyhow::bail!("No sinks added to pipeline");
+        }
+
+        source.setup_source(&self.pipeline)?;
+
+        for sink in &mut self.sinks {
+            sink.setup_sink(&self.pipeline)?;
+        }
+
+        let source_tee = source.get_tee()?;
+        for sink in &self.sinks {
+            let tee_src_pad = source_tee
+                .request_pad_simple("src_%u")
+                .context("Failed to request pad from tee")?;
+            let sink_pad = sink.get_sink_pad()?;
+
+            tee_src_pad
+                .link(&sink_pad)
+                .context("Failed to link tee to sink")?;
+        }
+
         Ok(())
     }
 
