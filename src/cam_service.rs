@@ -9,6 +9,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::{error, info};
 
+use crate::db::DashcamDb;
 use crate::hls_pipeline_sink::HlsPipelineSink;
 use crate::libcamera_pipeline_source::LibcameraPipelineSource;
 use crate::recording_pipeline::{RecordingConfig, RecordingPipeline};
@@ -21,6 +22,7 @@ pub struct CamService {
     pub running: Arc<AtomicBool>,
     pub recording_dir: String,
     pub recording_save_dir: String,
+    pub db: DashcamDb
 }
 
 impl CamService {
@@ -43,8 +45,6 @@ impl CamService {
         let pipeline = RecordingPipeline::new(config.clone())?;
         let pipeline_arc = Arc::new(Mutex::new(pipeline));
 
-        info!("Creating sinks BEFORE locking pipeline...");
-
         #[cfg(not(feature = "rpi"))]
         let (source, ts_sink, hls_sink) = {
             info!("V4L2 MODE CamService");
@@ -62,8 +62,6 @@ impl CamService {
             let hls_sink = Box::new(HlsPipelineSink::new(config.clone()));
             (source, ts_sink, hls_sink)
         };
-
-        info!("NOW locking pipeline to add source and sinks...");
         {
             let mut pipeline = pipeline_arc.lock().unwrap();
             pipeline.set_source(source);
@@ -77,9 +75,11 @@ impl CamService {
             running: Arc::new(AtomicBool::new(false)),
             recording_dir,
             recording_save_dir,
+            db: DashcamDb::setup()?
         };
 
         service.prep_dir_for_service()?;
+        service.db.new_trip()?;
 
         Ok(service)
     }
@@ -279,6 +279,10 @@ impl CamService {
             // Better to send a response and let main loop handle it
             // For now, just set running to false
             self.running.store(false, Ordering::SeqCst);
+        } else if message == "newtrip" {
+            if let Err(errmsg) = self.db.new_trip() {
+                error!("newtrip message received but unable to create a new trip in the db. {}", errmsg);
+            }
         } else if let Some(captures) = save_regex.captures(message) {
             if let Some(seconds_str) = captures.get(1) {
                 if let Ok(seconds) = seconds_str.as_str().parse::<u64>() {

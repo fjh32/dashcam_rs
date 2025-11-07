@@ -17,14 +17,19 @@ sed "s|@USER@|$REAL_USER|g" dashcam_rs.service.template | sudo tee /etc/systemd/
 echo "📦 Copying Database Stuff to $MAIN_DIR..."
 cp migrations/* $MAIN_DIR
 
+
+
+echo "📦 Stopping existing services..."
+sudo systemctl daemon-reload
+sudo systemctl stop dashcam.service
+sudo systemctl disable dashcam.service
+sudo systemctl stop dashcam_rs.service
+
 echo "📦 Installing binary to /usr/local/bin..."
 sudo cp target/release/dashcam_rs /usr/local/bin/
 
 # Reload and start systemd service
-echo "📦 Reloading and enabling service..."
-sudo systemctl daemon-reload
-sudo systemctl stop dashcam.service
-sudo systemctl disable dashcam.service
+echo "📦 Starting dashcam_rs services..."
 sudo systemctl enable dashcam_rs.service
 sudo systemctl restart dashcam_rs.service
 

@@ -27,14 +27,14 @@ fn new_trip_starts_at_current_index() {
     let db = DashcamDb::setup_with_paths_and_schema(&db_path, SCHEMA_SQL).unwrap();
 
     // index is 0 in a fresh DB
-    let t = db.new_trip("boot-test", "rtc").unwrap();
+    let t = db.new_trip().unwrap();
     assert_eq!(t.start_segment, 0);
 
     // If we increment a few times, the next new_trip should start at the new index
     for _ in 0..5 {
         db.increment_segment_index().unwrap();
     }
-    let t2 = db.new_trip("boot-test", "rtc").unwrap();
+    let t2 = db.new_trip().unwrap();
     assert_eq!(t2.start_segment, 5);
 }
 
@@ -69,14 +69,14 @@ fn eviction_flag_logic_marks_old_trips() {
     let db = DashcamDb::setup_with_paths_and_schema(&db_path, SCHEMA_SQL).unwrap();
 
     // Start a trip, record a few segments
-    let t = db.new_trip("boot-test", "rtc").unwrap();
+    let t = db.new_trip().unwrap();
     for _ in 0..5 {
         db.increment_segment_index().unwrap();
     }
 
     // Close it at current-1
     let current = db.get_segment_index().unwrap();
-    db.finalize_open_trip(current - 1, "rtc").unwrap();
+    db.finalize_open_trip(current - 1).unwrap();
 
     // Write more than a full ring to guarantee eviction
     for _ in 0..(SEGMENTS_TO_KEEP + 10) {
@@ -103,7 +103,7 @@ fn save_trip_and_start_new_records_saved_trips() {
     }
 
     let (_new_trip, closed_id, closed_start, closed_end) = db
-        .save_trip_and_start_new("boot-test", "rtc", "/tmp/saved-tests")
+        .save_trip_and_start_new( "/tmp/saved-tests")
         .unwrap();
 
     if closed_id != 0 {
