@@ -15,14 +15,14 @@ use crate::libcamera_pipeline_source::LibcameraPipelineSource;
 use crate::recording_pipeline::{RecordingConfig, RecordingPipeline};
 use crate::ts_file_pipeline_sink::TsFilePipelineSink;
 use crate::v4l2_pipeline_source::V4l2PipelineSource;
-use crate::{constants::*, db, log};
+use crate::{constants::*};
 
 pub struct CamService {
     pub recording_pipeline: Arc<Mutex<RecordingPipeline>>,
     pub running: Arc<AtomicBool>,
     pub recording_dir: String,
     pub recording_save_dir: String,
-    pub db: DashcamDb
+    // pub db: DashcamDb
 }
 
 impl CamService {
@@ -75,15 +75,16 @@ impl CamService {
             running: Arc::new(AtomicBool::new(false)),
             recording_dir,
             recording_save_dir,
-            db: DashcamDb::setup()?
+            // db: DashcamDb::setup()?
         };
 
         service.prep_dir_for_service()?;
-        service.db.new_trip()?;
+        // service.db.new_trip()?;
 
         Ok(service)
     }
 
+    // without listen_on_socket, its non-blocking now.
     pub fn main_loop(&mut self) -> Result<()> {
         info!(
             "Starting CamService::main_loop() at {}",
@@ -98,9 +99,9 @@ impl CamService {
             pipeline.start_pipeline()?;
         }
 
-        self.listen_on_socket()?;
+        // self.listen_on_socket()?;
+        // info!("Exiting main loop");
 
-        info!("Exiting main loop");
         Ok(())
     }
 
@@ -113,7 +114,7 @@ impl CamService {
             pipeline.stop_pipeline()?;
         }
 
-        self.remove_listening_socket()?;
+        // self.remove_listening_socket()?;
 
         info!(
             "Killed CamService at {}",
@@ -280,9 +281,9 @@ impl CamService {
             // For now, just set running to false
             self.running.store(false, Ordering::SeqCst);
         } else if message == "newtrip" {
-            if let Err(errmsg) = self.db.new_trip() {
-                error!("newtrip message received but unable to create a new trip in the db. {}", errmsg);
-            }
+            // if let Err(errmsg) = self.db.new_trip() {
+            //     error!("newtrip message received but unable to create a new trip in the db. {}", errmsg);
+            // }
         } else if let Some(captures) = save_regex.captures(message) {
             if let Some(seconds_str) = captures.get(1) {
                 if let Ok(seconds) = seconds_str.as_str().parse::<u64>() {

@@ -183,10 +183,10 @@ impl RecordingPipeline {
                 break;
             }
 
-            if !pipeline_running.load(Ordering::SeqCst) {
-                info!("Running flag set to false, exiting pipeline loop");
-                break;
-            }
+            // if !pipeline_running.load(Ordering::SeqCst) {
+            //     info!("Running flag set to false, exiting pipeline loop");
+            //     break;
+            // }
         }
 
         pipeline_running.store(false, Ordering::SeqCst);

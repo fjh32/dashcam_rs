@@ -27,15 +27,24 @@ fn main() -> Result<()> {
     let running = cam_service.running.clone();
     let mut signals = Signals::new(&[SIGINT, SIGTERM, SIGQUIT, SIGHUP])?;
 
-    thread::spawn(move || {
-        for sig in signals.forever() {
-            info!("Exiting cleanly. Received signal {}", sig);
-            running.store(false, Ordering::SeqCst);
-            std::process::exit(sig);
-        }
-    });
-
     cam_service.main_loop()?;
+
+    for sig in signals.forever() {
+        info!("Exiting cleanly. Received signal {}", sig);
+        // running.store(false, Ordering::SeqCst);
+        cam_service.kill_main_loop()?;
+        std::process::exit(sig);
+    }
+
+    // thread::spawn(move || {
+    //     for sig in signals.forever() {
+    //         info!("Exiting cleanly. Received signal {}", sig);
+    //         running.store(false, Ordering::SeqCst);
+    //         std::process::exit(sig);
+    //     }
+    // });
+
+    
 
     Ok(())
 }
