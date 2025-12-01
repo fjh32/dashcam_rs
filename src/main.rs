@@ -35,15 +35,6 @@ fn main() -> Result<()> {
         cam_service.kill_main_loop()?;
         std::process::exit(sig);
     }
-
-    // thread::spawn(move || {
-    //     for sig in signals.forever() {
-    //         info!("Exiting cleanly. Received signal {}", sig);
-    //         running.store(false, Ordering::SeqCst);
-    //         std::process::exit(sig);
-    //     }
-    // });
-
     
 
     Ok(())

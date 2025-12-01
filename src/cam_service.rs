@@ -5,11 +5,14 @@ use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{Sender, channel};
 use std::sync::{Arc, Mutex};
+use std::thread::JoinHandle;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::{error, info};
 
 use crate::db::DashcamDb;
+use crate::db_worker::{DBMessage, DBWorker, start_db_worker};
 use crate::hls_pipeline_sink::HlsPipelineSink;
 use crate::libcamera_pipeline_source::LibcameraPipelineSource;
 use crate::recording_pipeline::{RecordingConfig, RecordingPipeline};
@@ -23,6 +26,8 @@ pub struct CamService {
     pub recording_dir: String,
     pub recording_save_dir: String,
     // pub db: DashcamDb
+    pub db_worker_handle: Option<JoinHandle<()>>,
+    pub db_sender_channel: Arc<Sender<DBMessage>>
 }
 
 impl CamService {
@@ -41,6 +46,12 @@ impl CamService {
             frame_rate: VIDEO_FRAMERATE,
         };
 
+        info!("Creating DB Worker...");
+        let (dbsender, dbrecvr) = channel::<DBMessage>();
+        let db_worker = DBWorker::new(dbrecvr)?;
+        let dbhandle = start_db_worker(db_worker);
+        let dbsender = Arc::new(dbsender);
+
         info!("Creating RecordingPipeline...");
         let pipeline = RecordingPipeline::new(config.clone())?;
         let pipeline_arc = Arc::new(Mutex::new(pipeline));
@@ -49,7 +60,8 @@ impl CamService {
         let (source, ts_sink, hls_sink) = {
             info!("V4L2 MODE CamService");
             let source = Box::new(V4l2PipelineSource::new(config.clone()));
-            let ts_sink = Box::new(TsFilePipelineSink::new(config.clone(), SEGMENTS_TO_KEEP)?);
+            // let ts_sink = Box::new(TsFilePipelineSink::new(config.clone(), SEGMENTS_TO_KEEP)?);
+            let ts_sink = Box::new(TsFilePipelineSink::new_with_existing_dbworker(config.clone(), SEGMENTS_TO_KEEP, dbsender.clone())?);
             let hls_sink = Box::new(HlsPipelineSink::new(config.clone()));
             (source, ts_sink, hls_sink)
         };
@@ -58,7 +70,7 @@ impl CamService {
         let (source, ts_sink, hls_sink) = {
             info!("RPI MODE CamService");
             let source = Box::new(LibcameraPipelineSource::new(config.clone()));
-            let ts_sink = Box::new(TsFilePipelineSink::new(config.clone(), SEGMENTS_TO_KEEP)?);
+            let ts_sink = Box::new(TsFilePipelineSink::new_with_existing_dbworker(config.clone(), SEGMENTS_TO_KEEP, dbsender.clone())?);
             let hls_sink = Box::new(HlsPipelineSink::new(config.clone()));
             (source, ts_sink, hls_sink)
         };
@@ -75,12 +87,12 @@ impl CamService {
             running: Arc::new(AtomicBool::new(false)),
             recording_dir,
             recording_save_dir,
-            // db: DashcamDb::setup()?
+            db_worker_handle: Some(dbhandle),
+            db_sender_channel: dbsender.into()
         };
 
         service.prep_dir_for_service()?;
-        // service.db.new_trip()?;
-
+        
         Ok(service)
     }
 
@@ -91,16 +103,14 @@ impl CamService {
             chrono::Local::now().format("%m-%d-%Y %H:%M:%S")
         );
 
+        self.db_sender_channel.send(DBMessage::CreateNewTrip)?;
+
         self.running.store(true, Ordering::SeqCst);
 
-        // Start pipeline (non-blocking)
         {
             let mut pipeline = self.recording_pipeline.lock().unwrap();
             pipeline.start_pipeline()?;
         }
-
-        // self.listen_on_socket()?;
-        // info!("Exiting main loop");
 
         Ok(())
     }
@@ -114,8 +124,6 @@ impl CamService {
             pipeline.stop_pipeline()?;
         }
 
-        // self.remove_listening_socket()?;
-
         info!(
             "Killed CamService at {}",
             chrono::Local::now().format("%m-%d-%Y %H:%M:%S")
@@ -123,6 +131,8 @@ impl CamService {
         Ok(())
     }
 
+
+    // SAVE RECORDINGS and similar logic can go into WEB APP process
     // TODO verify this
     fn save_recordings(&self, seconds_back_to_save: u64) -> Result<()> {
         let current_time = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() as i64;
