@@ -1,20 +1,30 @@
 use anyhow::Result;
 use std::{
-    os::unix::thread,
-    sync::{Arc, mpsc::Receiver},
-    thread::{JoinHandle},
+    sync::mpsc::{self, Receiver},
+    thread::JoinHandle,
 };
 use tracing::{error, info, trace};
 
-use crate::db;
+use crate::db::{self, Trip};
+
+pub enum DBMessage {
+    SegmentUpdate(i64),
+    GetSegmentIndex{
+        reply: mpsc::Sender<i64>
+    },
+    CreateNewTrip,
+    GetMostRecentTrip {
+        reply: mpsc::Sender<anyhow::Result<Trip>>
+    }
+}
 
 pub struct DBWorker {
-    pub recvr: Receiver<i64>,
+    pub recvr: Receiver<DBMessage>,
     pub dbconn: db::DashcamDb,
 }
 
 impl DBWorker {
-    pub fn new(recvr: Receiver<i64>) -> Result<Self> {
+    pub fn new(recvr: Receiver<DBMessage>) -> Result<Self> {
         let dbconn = db::DashcamDb::setup()?;
 
         Ok(DBWorker {
@@ -26,9 +36,9 @@ impl DBWorker {
 
 pub fn start_db_worker(dbworker: DBWorker) -> JoinHandle<()> {
     let thread = std::thread::spawn(move || {
-        loop {
-            match dbworker.recvr.recv() {
-                Ok(segment_index) => {
+        while let Ok(dbMessage) = dbworker.recvr.recv() {
+            match dbMessage {
+                DBMessage::SegmentUpdate(segment_index) => {
                     trace!("DB Worker received segment_index={}", segment_index);
 
                     if let Err(e) = dbworker
@@ -37,13 +47,23 @@ pub fn start_db_worker(dbworker: DBWorker) -> JoinHandle<()> {
                     {
                         error!("DB Worker failed to update segment counters: {:#}", e);
                     }
-                }
-                Err(err) => {
-                    trace!("DB Worker channel closed: {}. Exiting worker thread.", err);
-                    break;
+                },
+                DBMessage::GetSegmentIndex { reply } => {
+                    let segment_index = match dbworker.dbconn.get_segment_index() {
+                        Ok(val) => val,
+                        Err(_) => 0,
+                    };
+                    let _ = reply.send(segment_index);
+                },
+                DBMessage::CreateNewTrip => {
+                    let _ = dbworker.dbconn.new_trip();
+                },
+                DBMessage::GetMostRecentTrip { reply } => {
+                    info!("TODO implement")
                 }
             }
         }
+        trace!("DB Worker channel closed. Exiting DB worker thread.");
     });
 
     thread

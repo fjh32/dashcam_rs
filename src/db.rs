@@ -1,4 +1,4 @@
-use crate::{constants::*, log};
+use crate::constants::*;
 use rusqlite::{Connection, OptionalExtension, params};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -24,6 +24,17 @@ pub struct Trip {
 pub struct DashcamDb {
     pub conn: Connection,
 }
+
+fn get_boot_id() -> String {
+    if let Ok(boot_id) = std::fs::read_to_string("/proc/sys/kernel/random/boot_id")
+        .map(|s| s.trim().to_string()) {
+            boot_id
+        }
+        else {
+            "unknown_boot_id".to_string()
+        }
+}
+
 
 impl DashcamDb {
     //////////// helper DB connection setups
@@ -352,8 +363,7 @@ impl DashcamDb {
 
     pub fn finalize_open_trip(
         &self,
-        end_segment_inclusive: i64,
-        end_clock_source: &str,
+        end_segment_inclusive: i64
     ) -> rusqlite::Result<()> {
         let now = Self::now();
         let cur_gen: i64 = self.get_segment_generation()?;
@@ -361,23 +371,22 @@ impl DashcamDb {
             "UPDATE trips
              SET final_segment = ?, end_time_utc = ?, end_clock_source = ?, end_gen = ?
              WHERE final_segment IS NULL;",
-            params![end_segment_inclusive, now, end_clock_source, cur_gen],
+            params![end_segment_inclusive, now, "boot", cur_gen],
         )?;
         Ok(())
     }
 
     pub fn insert_trip(
         &self,
-        boot_id: &str,
-        start_segment: i64,
-        start_clock_source: &str,
+        start_segment: i64
     ) -> rusqlite::Result<Trip> {
         let now = Self::now();
+        let boot_id = get_boot_id();
         let start_gen: i64 = self.get_segment_generation()?;
         self.conn.execute(
             "INSERT INTO trips(boot_id, start_time_utc, start_segment, start_clock_source, start_gen)
              VALUES(?, ?, ?, ?, ?);",
-            params![boot_id, now, start_segment, start_clock_source, start_gen],
+            params![boot_id, now, start_segment, "boot", start_gen],
         )?;
         let id = self.conn.last_insert_rowid();
         Ok(Trip {
@@ -387,7 +396,7 @@ impl DashcamDb {
             end_time_utc: None,
             start_segment,
             final_segment: None,
-            start_clock_source: Some(start_clock_source.to_string()),
+            start_clock_source: Some("boot".to_string()),
             end_clock_source: None,
             note: None,
             start_gen,
@@ -400,9 +409,9 @@ impl DashcamDb {
     /// MSG: NEW TRIP
     /// - edit current trip's row with FINAL_SEGMENT.
     /// - create new Trip row in table
-    pub fn new_trip(&self, boot_id: &str, clock_src: &str) -> rusqlite::Result<Trip> {
+    pub fn new_trip(&self) -> rusqlite::Result<Trip> {
         let tx = self.conn.unchecked_transaction()?;
-
+        let boot_id = get_boot_id();
         let current: i64 = tx.query_row(
             "SELECT value FROM counters WHERE name='segment_index';",
             [],
@@ -432,7 +441,7 @@ impl DashcamDb {
                     "UPDATE trips
                      SET final_segment = ?, end_time_utc = ?, end_clock_source = ?, end_gen = ?
                      WHERE id = ? AND final_segment IS NULL;",
-                    params![end_seg, Self::now(), clock_src, cur_gen, open_id],
+                    params![end_seg, Self::now(), "boot", cur_gen, open_id],
                 )?;
             }
         }
@@ -440,7 +449,7 @@ impl DashcamDb {
         tx.execute(
             "INSERT INTO trips(boot_id, start_time_utc, start_segment, start_clock_source, start_gen)
              VALUES(?, ?, ?, ?, ?);",
-            params![boot_id, Self::now(), current, clock_src, cur_gen],
+            params![boot_id, Self::now(), current, "boot", cur_gen],
         )?;
         let new_id = tx.last_insert_rowid();
         tx.commit()?;
@@ -452,7 +461,7 @@ impl DashcamDb {
             end_time_utc: None,
             start_segment: current,
             final_segment: None,
-            start_clock_source: Some(clock_src.to_string()),
+            start_clock_source: Some("boot".to_string()),
             end_clock_source: None,
             note: None,
             start_gen: cur_gen,
@@ -469,12 +478,10 @@ impl DashcamDb {
     ///     - I/O: stitch together all .ts files from trip into a single mp4 with ffmpeg
     pub fn save_trip_and_start_new(
         &self,
-        boot_id: &str,
-        clock_src: &str,
         saved_dir: &str,
     ) -> rusqlite::Result<(Trip, i64, i64, i64)> {
         let tx = self.conn.unchecked_transaction()?;
-
+        let boot_id = get_boot_id();
         let current: i64 = tx.query_row(
             "SELECT value FROM counters WHERE name='segment_index';",
             [],
@@ -505,7 +512,7 @@ impl DashcamDb {
                 "UPDATE trips
                  SET final_segment = ?, end_time_utc = ?, end_clock_source = ?, end_gen = ?
                  WHERE id = ? AND final_segment IS NULL;",
-                params![closed_end, Self::now(), clock_src, cur_gen, closed_id],
+                params![closed_end, Self::now(), "boot", cur_gen, closed_id],
             )?;
             tx.execute(
                 "INSERT INTO saved_trips(trip_id, saved_dir, saved_at_utc)
@@ -517,7 +524,7 @@ impl DashcamDb {
         tx.execute(
             "INSERT INTO trips(boot_id, start_time_utc, start_segment, start_clock_source, start_gen)
              VALUES(?, ?, ?, ?, ?);",
-            params![boot_id, Self::now(), current, clock_src, cur_gen],
+            params![boot_id, Self::now(), current, "boot", cur_gen],
         )?;
         let new_id = tx.last_insert_rowid();
         tx.commit()?;
@@ -529,7 +536,7 @@ impl DashcamDb {
             end_time_utc: None,
             start_segment: current,
             final_segment: None,
-            start_clock_source: Some(clock_src.to_string()),
+            start_clock_source: Some("boot".to_string()),
             end_clock_source: None,
             note: None,
             start_gen: cur_gen,

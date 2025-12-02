@@ -1,26 +1,31 @@
 use anyhow::{Context, Result};
 use regex::Regex;
 use std::fs;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader};
 use std::os::unix::net::{UnixListener, UnixStream};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{Sender, channel};
 use std::sync::{Arc, Mutex};
+use std::thread::JoinHandle;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::{error, info};
 
+use crate::db_worker::{DBMessage, DBWorker, start_db_worker};
 use crate::hls_pipeline_sink::HlsPipelineSink;
-use crate::libcamera_pipeline_source::LibcameraPipelineSource;
 use crate::recording_pipeline::{RecordingConfig, RecordingPipeline};
 use crate::ts_file_pipeline_sink::TsFilePipelineSink;
 use crate::v4l2_pipeline_source::V4l2PipelineSource;
-use crate::{constants::*, db, log};
+use crate::{constants::*};
 
 pub struct CamService {
     pub recording_pipeline: Arc<Mutex<RecordingPipeline>>,
     pub running: Arc<AtomicBool>,
     pub recording_dir: String,
     pub recording_save_dir: String,
+    // pub db: DashcamDb
+    pub db_worker_handle: Option<JoinHandle<()>>,
+    pub db_sender_channel: Arc<Sender<DBMessage>>
 }
 
 impl CamService {
@@ -39,17 +44,22 @@ impl CamService {
             frame_rate: VIDEO_FRAMERATE,
         };
 
+        info!("Creating DB Worker...");
+        let (dbsender, dbrecvr) = channel::<DBMessage>();
+        let db_worker = DBWorker::new(dbrecvr)?;
+        let dbhandle = start_db_worker(db_worker);
+        let dbsender = Arc::new(dbsender);
+
         info!("Creating RecordingPipeline...");
         let pipeline = RecordingPipeline::new(config.clone())?;
         let pipeline_arc = Arc::new(Mutex::new(pipeline));
-
-        info!("Creating sinks BEFORE locking pipeline...");
 
         #[cfg(not(feature = "rpi"))]
         let (source, ts_sink, hls_sink) = {
             info!("V4L2 MODE CamService");
             let source = Box::new(V4l2PipelineSource::new(config.clone()));
-            let ts_sink = Box::new(TsFilePipelineSink::new(config.clone(), SEGMENTS_TO_KEEP)?);
+            // let ts_sink = Box::new(TsFilePipelineSink::new(config.clone(), SEGMENTS_TO_KEEP)?);
+            let ts_sink = Box::new(TsFilePipelineSink::new_with_existing_dbworker(config.clone(), SEGMENTS_TO_KEEP, dbsender.clone())?);
             let hls_sink = Box::new(HlsPipelineSink::new(config.clone()));
             (source, ts_sink, hls_sink)
         };
@@ -58,12 +68,10 @@ impl CamService {
         let (source, ts_sink, hls_sink) = {
             info!("RPI MODE CamService");
             let source = Box::new(LibcameraPipelineSource::new(config.clone()));
-            let ts_sink = Box::new(TsFilePipelineSink::new(config.clone(), SEGMENTS_TO_KEEP)?);
+            let ts_sink = Box::new(TsFilePipelineSink::new_with_existing_dbworker(config.clone(), SEGMENTS_TO_KEEP, dbsender.clone())?);
             let hls_sink = Box::new(HlsPipelineSink::new(config.clone()));
             (source, ts_sink, hls_sink)
         };
-
-        info!("NOW locking pipeline to add source and sinks...");
         {
             let mut pipeline = pipeline_arc.lock().unwrap();
             pipeline.set_source(source);
@@ -77,30 +85,31 @@ impl CamService {
             running: Arc::new(AtomicBool::new(false)),
             recording_dir,
             recording_save_dir,
+            db_worker_handle: Some(dbhandle),
+            db_sender_channel: dbsender.into()
         };
 
         service.prep_dir_for_service()?;
-
+        
         Ok(service)
     }
 
+    // without listen_on_socket, its non-blocking now.
     pub fn main_loop(&mut self) -> Result<()> {
         info!(
             "Starting CamService::main_loop() at {}",
             chrono::Local::now().format("%m-%d-%Y %H:%M:%S")
         );
 
+        self.db_sender_channel.send(DBMessage::CreateNewTrip)?;
+
         self.running.store(true, Ordering::SeqCst);
 
-        // Start pipeline (non-blocking)
         {
             let mut pipeline = self.recording_pipeline.lock().unwrap();
             pipeline.start_pipeline()?;
         }
 
-        self.listen_on_socket()?;
-
-        info!("Exiting main loop");
         Ok(())
     }
 
@@ -113,8 +122,6 @@ impl CamService {
             pipeline.stop_pipeline()?;
         }
 
-        self.remove_listening_socket()?;
-
         info!(
             "Killed CamService at {}",
             chrono::Local::now().format("%m-%d-%Y %H:%M:%S")
@@ -122,6 +129,8 @@ impl CamService {
         Ok(())
     }
 
+
+    // SAVE RECORDINGS and similar logic can go into WEB APP process
     // TODO verify this
     fn save_recordings(&self, seconds_back_to_save: u64) -> Result<()> {
         let current_time = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() as i64;
@@ -279,6 +288,10 @@ impl CamService {
             // Better to send a response and let main loop handle it
             // For now, just set running to false
             self.running.store(false, Ordering::SeqCst);
+        } else if message == "newtrip" {
+            // if let Err(errmsg) = self.db.new_trip() {
+            //     error!("newtrip message received but unable to create a new trip in the db. {}", errmsg);
+            // }
         } else if let Some(captures) = save_regex.captures(message) {
             if let Some(seconds_str) = captures.get(1) {
                 if let Ok(seconds) = seconds_str.as_str().parse::<u64>() {

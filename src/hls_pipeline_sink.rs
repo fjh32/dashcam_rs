@@ -1,9 +1,7 @@
-use crate::log;
-use crate::recording_pipeline::{PipelineSink, RecordingConfig, RecordingPipeline};
+use crate::recording_pipeline::{PipelineSink, RecordingConfig};
 use anyhow::{Context, Result};
 use gstreamer as gst;
 use gstreamer::prelude::*;
-use std::sync::{Arc, Mutex};
 use tracing::info;
 
 pub struct HlsPipelineSink {

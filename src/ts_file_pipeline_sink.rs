@@ -1,23 +1,20 @@
-use crate::db_worker::{self, DBWorker};
-use crate::recording_pipeline::{PipelineSink, RecordingConfig, RecordingPipeline};
+use crate::db_worker::{self, DBMessage, DBWorker};
+use crate::recording_pipeline::{PipelineSink, RecordingConfig};
 use anyhow::{Context, Result};
 use gstreamer as gst;
 use gstreamer::prelude::*;
-use std::fs::{self, File};
-use std::io::{Read, Write};
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::fs::{self};
+use std::path::PathBuf;
+use std::sync::{Arc, mpsc};
 use std::sync::atomic::{AtomicI64, Ordering};
-use std::sync::mpsc::{Receiver, Sender, channel};
+use std::sync::mpsc::{Sender, channel};
 use std::thread::JoinHandle;
-use tracing::{error, info};
 
-use crate::db;
 
 pub struct TsFilePipelineSink {
     config: RecordingConfig,
     db_worker_handle: Option<JoinHandle<()>>,
-    db_sender: Arc<Sender<i64>>,
+    db_sender: Arc<Sender<DBMessage>>,
     segment_index: Arc<AtomicI64>,
     max_segments: i64,
     queue: Option<gst::Element>,
@@ -26,8 +23,27 @@ pub struct TsFilePipelineSink {
 }
 
 impl TsFilePipelineSink {
+    pub fn new_with_existing_dbworker(config: RecordingConfig, max_segments: i64, db_sender: Arc<Sender<DBMessage>>) -> Result<Self> {
+        let (reply_tx, reply_rx) = mpsc::channel();
+        db_sender.send(DBMessage::GetSegmentIndex { reply: reply_tx })?;
+        let segment_index = reply_rx.recv()?;
+
+        Ok(TsFilePipelineSink {
+            config,
+            db_worker_handle: None,
+            db_sender: db_sender,
+            segment_index: Arc::new(AtomicI64::new(segment_index)),
+            max_segments,
+            queue: None,
+            muxer: None,
+            sink: None,
+        })
+    }
+}
+
+impl TsFilePipelineSink {
     pub fn new(config: RecordingConfig, max_segments: i64) -> Result<Self> {
-        let (sender, recvr) = channel::<i64>();
+        let (sender, recvr) = channel::<DBMessage>();
         let db_worker = DBWorker::new(recvr)?;
 
         // TODO load this from DB, track it in our variable, call updates to it in db from our variable over channel
@@ -94,7 +110,7 @@ impl PipelineSink for TsFilePipelineSink {
         let sink = self.sink.clone().unwrap();
 
         sink.set_property("muxer", &muxer);
-        sink.set_property("max-size-time", (video_duration * 1_000_000_000u64));
+        sink.set_property("max-size-time", video_duration * 1_000_000_000u64);
 
         let config = self.config.clone();
         let segment_index = self.segment_index.clone();
@@ -115,7 +131,7 @@ impl PipelineSink for TsFilePipelineSink {
             };
 
             segment_index.store(next_index, Ordering::SeqCst);
-            let _ = db_sender.send(next_index);
+            let _ = db_sender.send(DBMessage::SegmentUpdate(next_index));
             
             Some(filename.to_value())
         });
