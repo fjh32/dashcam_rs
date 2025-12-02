@@ -1,7 +1,6 @@
 use anyhow::Result;
 use std::{
-    os::unix::thread,
-    sync::{Arc, mpsc::{self, Receiver}},
+    sync::mpsc::{self, Receiver},
     thread::JoinHandle,
 };
 use tracing::{error, info, trace};

@@ -1,9 +1,9 @@
 use anyhow::{Context, Result};
 use regex::Regex;
 use std::fs;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader};
 use std::os::unix::net::{UnixListener, UnixStream};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Sender, channel};
 use std::sync::{Arc, Mutex};
@@ -11,10 +11,8 @@ use std::thread::JoinHandle;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::{error, info};
 
-use crate::db::DashcamDb;
 use crate::db_worker::{DBMessage, DBWorker, start_db_worker};
 use crate::hls_pipeline_sink::HlsPipelineSink;
-use crate::libcamera_pipeline_source::LibcameraPipelineSource;
 use crate::recording_pipeline::{RecordingConfig, RecordingPipeline};
 use crate::ts_file_pipeline_sink::TsFilePipelineSink;
 use crate::v4l2_pipeline_source::V4l2PipelineSource;

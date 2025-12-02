@@ -1,9 +1,6 @@
 use anyhow::Result;
 use signal_hook::consts::signal::*;
 use signal_hook::iterator::Signals;
-use std::sync::atomic::Ordering;
-use std::sync::{Arc, Mutex};
-use std::thread;
 use tracing::info;
 
 mod cam_service;

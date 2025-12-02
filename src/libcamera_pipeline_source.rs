@@ -1,10 +1,9 @@
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 #[allow(dead_code)]
 use gstreamer as gst;
 use gstreamer::prelude::*;
 use tracing::info;
 
-use crate::log;
 use crate::recording_pipeline::{PipelineSource, RecordingConfig};
 
 ///

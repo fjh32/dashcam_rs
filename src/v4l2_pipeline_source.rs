@@ -1,6 +1,6 @@
 use std::{fs, thread, time::Duration};
 
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context, Result, anyhow};
 #[allow(dead_code)]
 use gstreamer as gst;
 use gstreamer::prelude::*;

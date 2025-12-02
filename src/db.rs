@@ -1,4 +1,4 @@
-use crate::{constants::*, log};
+use crate::constants::*;
 use rusqlite::{Connection, OptionalExtension, params};
 use std::fs;
 use std::path::{Path, PathBuf};

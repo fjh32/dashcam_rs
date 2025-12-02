@@ -1,18 +1,15 @@
 use crate::db_worker::{self, DBMessage, DBWorker};
-use crate::recording_pipeline::{PipelineSink, RecordingConfig, RecordingPipeline};
+use crate::recording_pipeline::{PipelineSink, RecordingConfig};
 use anyhow::{Context, Result};
 use gstreamer as gst;
 use gstreamer::prelude::*;
-use std::fs::{self, File};
-use std::io::{Read, Write};
-use std::path::{Path, PathBuf};
+use std::fs::{self};
+use std::path::PathBuf;
 use std::sync::{Arc, mpsc};
 use std::sync::atomic::{AtomicI64, Ordering};
-use std::sync::mpsc::{Receiver, Sender, channel};
+use std::sync::mpsc::{Sender, channel};
 use std::thread::JoinHandle;
-use tracing::{error, info};
 
-use crate::db;
 
 pub struct TsFilePipelineSink {
     config: RecordingConfig,
@@ -113,7 +110,7 @@ impl PipelineSink for TsFilePipelineSink {
         let sink = self.sink.clone().unwrap();
 
         sink.set_property("muxer", &muxer);
-        sink.set_property("max-size-time", (video_duration * 1_000_000_000u64));
+        sink.set_property("max-size-time", video_duration * 1_000_000_000u64);
 
         let config = self.config.clone();
         let segment_index = self.segment_index.clone();
