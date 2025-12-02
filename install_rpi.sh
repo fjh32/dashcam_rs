@@ -9,7 +9,7 @@ sudo mkdir -p "$RECORDINGS_DIR"
 sudo chown -R "$USER:$USER" "$RECORDINGS_DIR"
 
 echo "Building..."
-cargo build --release --features rpi
+cargo build --release --features rpi -j 1
 
 echo "📦 Installing systemd service..."
 sed "s|@USER@|$REAL_USER|g" dashcam_rs.service.template | sudo tee /etc/systemd/system/dashcam_rs.service > /dev/null
