@@ -6,7 +6,7 @@ REAL_USER=$(logname)
 
 echo "Creating recordings directory at $RECORDINGS_DIR..."
 sudo mkdir -p "$RECORDINGS_DIR"
-sudo chown -R "$USER:$USER" "$RECORDINGS_DIR"
+sudo chown -R "$USER:$USER" "$MAIN_DIR"
 
 echo "Building..."
 cargo build --release --features rpi -j 1
