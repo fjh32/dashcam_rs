@@ -1,5 +1,5 @@
 use crate::constants::*;
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{params, Connection, OptionalExtension};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -27,14 +27,13 @@ pub struct DashcamDb {
 
 fn get_boot_id() -> String {
     if let Ok(boot_id) = std::fs::read_to_string("/proc/sys/kernel/random/boot_id")
-        .map(|s| s.trim().to_string()) {
-            boot_id
-        }
-        else {
-            "unknown_boot_id".to_string()
-        }
+        .map(|s| s.trim().to_string())
+    {
+        boot_id
+    } else {
+        "unknown_boot_id".to_string()
+    }
 }
-
 
 impl DashcamDb {
     //////////// helper DB connection setups
@@ -48,8 +47,8 @@ impl DashcamDb {
         }
         let db = Self::open(db_path)?;
         db.run_schema(schema_sql)?;
-        db.ensure_counters_initialized()?;
-        db.clamp_segment_index()?;
+        db.ensure_counters_initialized()?; // now seeds cameras + camera_state
+        db.clamp_segment_index()?; // keep ring index in range if constant changed
         db.mark_fully_evicted_trips()?;
         Ok(db)
     }
@@ -77,7 +76,7 @@ impl DashcamDb {
         let schema_sql = fs::read_to_string(SCHEMA_PATH).expect("Failed to read schema file");
 
         db.run_schema(&schema_sql)?;
-        db.ensure_counters_initialized()?;
+        db.ensure_counters_initialized()?; // seeds 'dashcam' camera + camera_state
         db.clamp_segment_index()?; // keep ring index in range if constant changed
         db.mark_fully_evicted_trips()?;
         Ok(db)
@@ -106,21 +105,52 @@ impl DashcamDb {
             .as_secs() as i64
     }
 
+    /// Helper: get the camera_id for the single dashcam camera.
+    /// Assumes schema has inserted a row with key='dashcam'.
+    fn get_dashcam_camera_id(&self) -> rusqlite::Result<i64> {
+        self.conn.query_row(
+            "SELECT id FROM cameras WHERE key='dashcam';",
+            [],
+            |r| r.get(0),
+        )
+    }
+
+    /// Seed base rows for the new schema:
+    /// - ensure there's a 'dashcam' camera row
+    /// - ensure there's a matching camera_state row (segment counters)
+    ///
+    /// The name is kept for compatibility with existing call sites.
     pub fn ensure_counters_initialized(&self) -> rusqlite::Result<()> {
-        self.conn.execute_batch(
-            "
-            INSERT OR IGNORE INTO counters (name, value) VALUES
-            ('segment_index', 0),
-            ('segment_generation', 0),
-            ('absolute_segments', 0);
-            ",
+        // Insert the dashcam camera if it doesn't exist
+        self.conn.execute(
+            "INSERT INTO cameras (key, name)
+             VALUES ('dashcam', 'Dashcam Front')
+             ON CONFLICT(key) DO NOTHING;",
+            [],
         )?;
+
+        // Insert camera_state row if it doesn't exist
+        self.conn.execute(
+            "INSERT INTO camera_state (camera_id, segment_index, segment_generation, absolute_segments)
+             VALUES (
+               (SELECT id FROM cameras WHERE key='dashcam'),
+               0, 0, 0
+             )
+             ON CONFLICT(camera_id) DO NOTHING;",
+            [],
+        )?;
+
         Ok(())
     }
 
+    // ====== GETTERS for segment counters (from camera_state) ======
+
     pub fn get_segment_index(&self) -> rusqlite::Result<i64> {
         self.conn.query_row(
-            "SELECT value FROM counters WHERE name='segment_index';",
+            "SELECT cs.segment_index
+             FROM camera_state cs
+             JOIN cameras c ON c.id = cs.camera_id
+             WHERE c.key='dashcam';",
             [],
             |r| r.get(0),
         )
@@ -128,7 +158,10 @@ impl DashcamDb {
 
     pub fn get_segment_generation(&self) -> rusqlite::Result<i64> {
         self.conn.query_row(
-            "SELECT value FROM counters WHERE name='segment_generation';",
+            "SELECT cs.segment_generation
+             FROM camera_state cs
+             JOIN cameras c ON c.id = cs.camera_id
+             WHERE c.key='dashcam';",
             [],
             |r| r.get(0),
         )
@@ -136,33 +169,46 @@ impl DashcamDb {
 
     pub fn get_absolute_segments(&self) -> rusqlite::Result<i64> {
         self.conn.query_row(
-            "SELECT value FROM counters WHERE name='absolute_segments';",
+            "SELECT cs.absolute_segments
+             FROM camera_state cs
+             JOIN cameras c ON c.id = cs.camera_id
+             WHERE c.key='dashcam';",
             [],
             |r| r.get(0),
         )
     }
 
-    // ====== SETTERS ======
+    // ====== SETTERS for segment counters (camera_state) ======
+
     pub fn set_segment_index(&self, value: i64) -> rusqlite::Result<()> {
+        let camera_id = self.get_dashcam_camera_id()?;
         self.conn.execute(
-            "UPDATE counters SET value=? WHERE name='segment_index';",
-            params![value],
+            "UPDATE camera_state
+             SET segment_index=?
+             WHERE camera_id=?;",
+            params![value, camera_id],
         )?;
         Ok(())
     }
 
     pub fn set_segment_generation(&self, value: i64) -> rusqlite::Result<()> {
+        let camera_id = self.get_dashcam_camera_id()?;
         self.conn.execute(
-            "UPDATE counters SET value=? WHERE name='segment_generation';",
-            params![value],
+            "UPDATE camera_state
+             SET segment_generation=?
+             WHERE camera_id=?;",
+            params![value, camera_id],
         )?;
         Ok(())
     }
 
     pub fn set_absolute_segments(&self, value: i64) -> rusqlite::Result<()> {
+        let camera_id = self.get_dashcam_camera_id()?;
         self.conn.execute(
-            "UPDATE counters SET value=? WHERE name='absolute_segments';",
-            params![value],
+            "UPDATE camera_state
+             SET absolute_segments=?
+             WHERE camera_id=?;",
+            params![value, camera_id],
         )?;
         Ok(())
     }
@@ -177,24 +223,15 @@ impl DashcamDb {
         &self,
         new_segment_index: i64,
     ) -> rusqlite::Result<()> {
+        let camera_id = self.get_dashcam_camera_id()?;
         let tx = self.conn.unchecked_transaction()?;
 
-        let cur_idx: i64 = tx.query_row(
-            "SELECT value FROM counters WHERE name='segment_index';",
-            [],
-            |r| r.get(0),
-        )?;
-
-        let cur_gen: i64 = tx.query_row(
-            "SELECT value FROM counters WHERE name='segment_generation';",
-            [],
-            |r| r.get(0),
-        )?;
-
-        let cur_abs: i64 = tx.query_row(
-            "SELECT value FROM counters WHERE name='absolute_segments';",
-            [],
-            |r| r.get(0),
+        let (cur_idx, cur_gen, cur_abs): (i64, i64, i64) = tx.query_row(
+            "SELECT segment_index, segment_generation, absolute_segments
+             FROM camera_state
+             WHERE camera_id=?1;",
+            params![camera_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         )?;
 
         // If DB already matches, nothing to do.
@@ -209,8 +246,6 @@ impl DashcamDb {
         let wrapped = new_segment_index < cur_idx;
 
         // How many segments did we advance?
-        // non-wrapped: diff = new_segment_index - cur_idx
-        // wrapped:     diff = (max - cur_idx) + new_segment_index
         let diff = if wrapped {
             (max - cur_idx) + new_segment_index
         } else {
@@ -219,22 +254,28 @@ impl DashcamDb {
 
         // Update segment_index to the new value from the pipeline
         tx.execute(
-            "UPDATE counters SET value=? WHERE name='segment_index';",
-            params![new_segment_index],
+            "UPDATE camera_state
+             SET segment_index=?
+             WHERE camera_id=?;",
+            params![new_segment_index, camera_id],
         )?;
 
         // If we wrapped, bump generation
         if wrapped {
             tx.execute(
-                "UPDATE counters SET value=? WHERE name='segment_generation';",
-                params![cur_gen + 1],
+                "UPDATE camera_state
+                 SET segment_generation=?
+                 WHERE camera_id=?;",
+                params![cur_gen + 1, camera_id],
             )?;
         }
 
         // absolute_segments always increases by 'diff'
         tx.execute(
-            "UPDATE counters SET value=? WHERE name='absolute_segments';",
-            params![cur_abs + diff],
+            "UPDATE camera_state
+             SET absolute_segments=?
+             WHERE camera_id=?;",
+            params![cur_abs + diff, camera_id],
         )?;
 
         tx.commit()?;
@@ -244,22 +285,15 @@ impl DashcamDb {
     /// Increment ring index and bump generation/absolute atomically.
     /// Returns new ring index (post-increment).
     pub fn increment_segment_index(&self) -> rusqlite::Result<i64> {
+        let camera_id = self.get_dashcam_camera_id()?;
         let tx = self.conn.unchecked_transaction()?;
 
-        let cur_idx: i64 = tx.query_row(
-            "SELECT value FROM counters WHERE name='segment_index';",
-            [],
-            |r| r.get(0),
-        )?;
-        let cur_gen: i64 = tx.query_row(
-            "SELECT value FROM counters WHERE name='segment_generation';",
-            [],
-            |r| r.get(0),
-        )?;
-        let cur_abs: i64 = tx.query_row(
-            "SELECT value FROM counters WHERE name='absolute_segments';",
-            [],
-            |r| r.get(0),
+        let (cur_idx, cur_gen, cur_abs): (i64, i64, i64) = tx.query_row(
+            "SELECT segment_index, segment_generation, absolute_segments
+             FROM camera_state
+             WHERE camera_id=?1;",
+            params![camera_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         )?;
 
         let (next_idx, next_gen, wrapped) = if cur_idx + 1 >= SEGMENTS_TO_KEEP {
@@ -269,18 +303,24 @@ impl DashcamDb {
         };
 
         tx.execute(
-            "UPDATE counters SET value=? WHERE name='segment_index';",
-            params![next_idx],
+            "UPDATE camera_state
+             SET segment_index=?
+             WHERE camera_id=?;",
+            params![next_idx, camera_id],
         )?;
         if wrapped {
             tx.execute(
-                "UPDATE counters SET value=? WHERE name='segment_generation';",
-                params![next_gen],
+                "UPDATE camera_state
+                 SET segment_generation=?
+                 WHERE camera_id=?;",
+                params![next_gen, camera_id],
             )?;
         }
         tx.execute(
-            "UPDATE counters SET value=? WHERE name='absolute_segments';",
-            params![cur_abs + 1],
+            "UPDATE camera_state
+             SET absolute_segments=?
+             WHERE camera_id=?;",
+            params![cur_abs + 1, camera_id],
         )?;
 
         tx.commit()?;
@@ -288,25 +328,29 @@ impl DashcamDb {
     }
 
     pub fn clamp_segment_index(&self) -> rusqlite::Result<()> {
+        // Keep the dashcam camera's segment_index clamped to SEGMENTS_TO_KEEP
         self.conn.execute(
-            "UPDATE counters
-             SET value = value % ?1
-             WHERE name='segment_index';",
+            "UPDATE camera_state
+             SET segment_index = segment_index % ?1
+             WHERE camera_id = (SELECT id FROM cameras WHERE key='dashcam');",
             params![SEGMENTS_TO_KEEP],
         )?;
         Ok(())
     }
 
     /// Mark trips whose files are certainly overwritten by the ring.
-    /// Uses absolute_segments to be robust to SEGMENTS_TO_KEEP changes.
+    /// Uses camera_state.absolute_segments to be robust to SEGMENTS_TO_KEEP changes.
     ///
     /// Call this function on a schedule or every so often somewhere else....
     pub fn mark_fully_evicted_trips(&self) -> rusqlite::Result<usize> {
+        let camera_id = self.get_dashcam_camera_id()?;
         let tx = self.conn.unchecked_transaction()?;
 
         let abs_latest: i64 = tx.query_row(
-            "SELECT value FROM counters WHERE name='absolute_segments';",
-            [],
+            "SELECT absolute_segments
+             FROM camera_state
+             WHERE camera_id=?1;",
+            params![camera_id],
             |r| r.get(0),
         )?;
         // earliest absolute index that still exists on disk
@@ -317,9 +361,10 @@ impl DashcamDb {
              SET fully_evicted = 1,
                  evicted_at_utc = CAST(strftime('%s','now') AS INTEGER)
              WHERE fully_evicted = 0
+               AND camera_id = ?3
                AND final_segment IS NOT NULL
                AND ((COALESCE(end_gen, start_gen) * ?1) + final_segment) < ?2;",
-            params![SEGMENTS_TO_KEEP, abs_earliest],
+            params![SEGMENTS_TO_KEEP, abs_earliest, camera_id],
         )?;
 
         tx.commit()?;
@@ -363,7 +408,7 @@ impl DashcamDb {
 
     pub fn finalize_open_trip(
         &self,
-        end_segment_inclusive: i64
+        end_segment_inclusive: i64,
     ) -> rusqlite::Result<()> {
         let now = Self::now();
         let cur_gen: i64 = self.get_segment_generation()?;
@@ -376,17 +421,16 @@ impl DashcamDb {
         Ok(())
     }
 
-    pub fn insert_trip(
-        &self,
-        start_segment: i64
-    ) -> rusqlite::Result<Trip> {
+    pub fn insert_trip(&self, start_segment: i64) -> rusqlite::Result<Trip> {
         let now = Self::now();
         let boot_id = get_boot_id();
         let start_gen: i64 = self.get_segment_generation()?;
+        let camera_id = self.get_dashcam_camera_id()?;
+
         self.conn.execute(
-            "INSERT INTO trips(boot_id, start_time_utc, start_segment, start_clock_source, start_gen)
-             VALUES(?, ?, ?, ?, ?);",
-            params![boot_id, now, start_segment, "boot", start_gen],
+            "INSERT INTO trips(camera_id, boot_id, start_time_utc, start_segment, start_clock_source, start_gen)
+             VALUES(?, ?, ?, ?, ?, ?);",
+            params![camera_id, boot_id, now, start_segment, "boot", start_gen],
         )?;
         let id = self.conn.last_insert_rowid();
         Ok(Trip {
@@ -410,16 +454,22 @@ impl DashcamDb {
     /// - edit current trip's row with FINAL_SEGMENT.
     /// - create new Trip row in table
     pub fn new_trip(&self) -> rusqlite::Result<Trip> {
+        let camera_id = self.get_dashcam_camera_id()?;
         let tx = self.conn.unchecked_transaction()?;
         let boot_id = get_boot_id();
+
         let current: i64 = tx.query_row(
-            "SELECT value FROM counters WHERE name='segment_index';",
-            [],
+            "SELECT segment_index
+             FROM camera_state
+             WHERE camera_id=?1;",
+            params![camera_id],
             |r| r.get(0),
         )?;
         let cur_gen: i64 = tx.query_row(
-            "SELECT value FROM counters WHERE name='segment_generation';",
-            [],
+            "SELECT segment_generation
+             FROM camera_state
+             WHERE camera_id=?1;",
+            params![camera_id],
             |r| r.get(0),
         )?;
 
@@ -447,9 +497,9 @@ impl DashcamDb {
         }
 
         tx.execute(
-            "INSERT INTO trips(boot_id, start_time_utc, start_segment, start_clock_source, start_gen)
-             VALUES(?, ?, ?, ?, ?);",
-            params![boot_id, Self::now(), current, "boot", cur_gen],
+            "INSERT INTO trips(camera_id, boot_id, start_time_utc, start_segment, start_clock_source, start_gen)
+             VALUES(?, ?, ?, ?, ?, ?);",
+            params![camera_id, boot_id, Self::now(), current, "boot", cur_gen],
         )?;
         let new_id = tx.last_insert_rowid();
         tx.commit()?;
@@ -480,16 +530,22 @@ impl DashcamDb {
         &self,
         saved_dir: &str,
     ) -> rusqlite::Result<(Trip, i64, i64, i64)> {
+        let camera_id = self.get_dashcam_camera_id()?;
         let tx = self.conn.unchecked_transaction()?;
         let boot_id = get_boot_id();
+
         let current: i64 = tx.query_row(
-            "SELECT value FROM counters WHERE name='segment_index';",
-            [],
+            "SELECT segment_index
+             FROM camera_state
+             WHERE camera_id=?1;",
+            params![camera_id],
             |r| r.get(0),
         )?;
         let cur_gen: i64 = tx.query_row(
-            "SELECT value FROM counters WHERE name='segment_generation';",
-            [],
+            "SELECT segment_generation
+             FROM camera_state
+             WHERE camera_id=?1;",
+            params![camera_id],
             |r| r.get(0),
         )?;
 
@@ -522,9 +578,9 @@ impl DashcamDb {
         }
 
         tx.execute(
-            "INSERT INTO trips(boot_id, start_time_utc, start_segment, start_clock_source, start_gen)
-             VALUES(?, ?, ?, ?, ?);",
-            params![boot_id, Self::now(), current, "boot", cur_gen],
+            "INSERT INTO trips(camera_id, boot_id, start_time_utc, start_segment, start_clock_source, start_gen)
+             VALUES(?, ?, ?, ?, ?, ?);",
+            params![camera_id, boot_id, Self::now(), current, "boot", cur_gen],
         )?;
         let new_id = tx.last_insert_rowid();
         tx.commit()?;
@@ -552,7 +608,6 @@ impl DashcamDb {
 
     /// Fast check for a single trip’s eviction status using absolute_segments.
     pub fn is_trip_fully_evicted(&self, trip_id: i64) -> rusqlite::Result<bool> {
-        // Single-row pull; short-circuit if already flagged or still open.
         let (abs_latest, fully_evicted, final_seg_opt, end_gen_or_start): (
             i64,
             bool,
@@ -560,12 +615,13 @@ impl DashcamDb {
             i64,
         ) = self.conn.query_row(
             "SELECT
-                     (SELECT value FROM counters WHERE name='absolute_segments') AS abs_latest,
-                     t.fully_evicted,
-                     t.final_segment,
-                     COALESCE(t.end_gen, t.start_gen)
-                 FROM trips t
-                 WHERE t.id = ?1;",
+                 cs.absolute_segments AS abs_latest,
+                 t.fully_evicted,
+                 t.final_segment,
+                 COALESCE(t.end_gen, t.start_gen)
+             FROM trips t
+             JOIN camera_state cs ON cs.camera_id = t.camera_id
+             WHERE t.id = ?1;",
             params![trip_id],
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
         )?;

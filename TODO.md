@@ -1,3 +1,18 @@
+Perfect, this is a great moment to “cut over clean” instead of dragging the old schema around.
+
+Below is:
+
+1. **Fresh schema definition** (single DB, multi-camera ready, dashcam = 1 camera).
+2. **Updated checklist** tailored to “new schema first, then fix TSFilePipelineSink, then cam_service.”
+
+---
+
+## 1. New schema (full redefine)
+
+Assumption: you’re fine blowing away the old DB or creating a new file. No `ALTER TABLE`, just `CREATE`.
+
+```sql
+-- Pragmas: same spirit as before
 PRAGMA journal_mode=WAL;
 PRAGMA synchronous=NORMAL;
 PRAGMA foreign_keys=ON;
@@ -11,8 +26,7 @@ PRAGMA temp_store=MEMORY;
 CREATE TABLE IF NOT EXISTS cameras (
   id    INTEGER PRIMARY KEY,
   key   TEXT NOT NULL UNIQUE,   -- e.g. "dashcam", "cam_front", "cam_garage"
-  name  TEXT NOT NULL,           -- human-friendly name
-  rtsp_url TEXT
+  name  TEXT NOT NULL           -- human-friendly name
   -- (optional later: rtsp_url, notes, etc.)
 );
 
@@ -123,3 +137,110 @@ CREATE INDEX IF NOT EXISTS idx_segments_camera_time
 
 CREATE INDEX IF NOT EXISTS idx_segments_camera_abs
   ON segments(camera_id, absolute_index);
+```
+
+### Dashcam build initial seeding
+
+When you first create the DB for your current dashcam build, you’ll want to seed one camera & its camera_state:
+
+```sql
+INSERT INTO cameras (key, name)
+VALUES ('dashcam', 'Dashcam Front')
+ON CONFLICT(key) DO NOTHING;
+
+INSERT INTO camera_state (camera_id, segment_index, segment_generation, absolute_segments)
+VALUES (
+  (SELECT id FROM cameras WHERE key='dashcam'),
+  0, 0, 0
+)
+ON CONFLICT(camera_id) DO NOTHING;
+```
+
+Your Rust `DashcamDb::setup()` can run that after creating tables.
+
+---
+
+# 2. Updated checklist (new-schema-first)
+
+Reordered and tweaked to match your “drop old schema, keep TSFilePipelineSink working before touching cam_service”.
+
+### Step 0 – New branch
+
+* Create a git branch, e.g. `feature/new-nvr-schema`.
+
+### Step 1 – Replace schema
+
+* Replace your old schema SQL with the **new schema above** in `schema.sql` (or equivalent).
+* Update `DashcamDb::setup()` to:
+
+  * open connection
+  * run the full schema SQL
+  * run the “seed dashcam camera + camera_state” inserts.
+
+At this point, nothing else compiles against it yet; you’re just defining the new world.
+
+### Step 2 – Update `db.rs` API to the new schema (single camera)
+
+Before touching `TSFilePipelineSink` or `CamService`, refit your DB layer:
+
+* Change the DB API so that:
+
+  * Functions that previously used `counters.segment_index`, `segment_generation`, `absolute_segments` now operate on **`camera_state`** instead.
+  * Hardcode `camera_key = "dashcam"` for now (or store it in config) and resolve to `camera_id` inside `DashcamDb`.
+
+Concretely:
+
+* `fn get_current_segment_state(&self) -> Result<(segment_index, segment_generation, absolute_segments)>`
+
+  * SELECT from `camera_state` WHERE camera_id = (SELECT id FROM cameras WHERE key='dashcam')
+* `fn bump_segment_counters(&self, new_index: i64) -> Result<()>`
+
+  * UPDATE `camera_state` with new `segment_index`, maybe increment `segment_generation`, `absolute_segments`, etc.
+* `fn new_trip(...)`:
+
+  * Insert into `trips` with `camera_id = dashcam_id`.
+
+Do **not** change `TSFilePipelineSink` yet—just make `db.rs` compile and tests pass using the new schema but same behavior.
+
+### Step 3 – Rewire `TSFilePipelineSink` to use the updated DB API
+
+Now adjust `TsFilePipelineSink` so it works with the new DB layer:
+
+* The GStreamer callback should **not** know about schema details; it should still:
+
+  * increment its in-memory `segment_index`
+  * send a `DbCommand` (or call into `DashcamDb`) to persist the new values.
+* Internally, the DB code uses `camera_state` + `trips` as per the new schema.
+
+Goal of this step:
+
+* All segment indexing / trip logic works exactly like before,
+
+  * but is now backed by `cameras` + `camera_state` + `trips` instead of the old `counters` + `trips`.
+
+You can ignore the `segments` table for now or, if you feel like it, start inserting minimal rows there too.
+
+### Step 4 – Confirm dashcam build behavior unchanged
+
+* Run your existing dashcam binary (single-camera, libcamera source, TsFilePipelineSink).
+* Check:
+
+  * DB is created with the new schema.
+  * `camera_state` is updated as you record.
+  * `trips` behave as before.
+  * Files on disk/segment naming still work as expected.
+
+At this point, the refactor is effectively invisible from the outside, but the DB is future-proofed for multiple cameras.
+
+### Step 5 – Only then: evolve `CamService` into multi-pipeline orchestrator
+
+Once single-camera dashcam is stable on the new schema, you can move on to:
+
+* Introduce config-based cameras (TOML `[[cameras]]` etc.).
+* Change `CamService` to own `Vec<RecordingPipeline>` instead of a single one.
+* Add RTSP sources / NVR sinks for PoE cams.
+* Update DB APIs and `TSFilePipelineSink` / future NVR sinks to take a `camera_key` (or `camera_id`) instead of assuming `"dashcam"`.
+
+---
+
+If you want next, we can zoom into **Step 2** and sketch the new `DashcamDb` methods that wrap `camera_state` (get/set segment index, generation, absolute), so you can drop them straight into `db.rs` with minimal guesswork.

@@ -16,6 +16,7 @@ use crate::hls_pipeline_sink::HlsPipelineSink;
 use crate::recording_pipeline::{RecordingConfig, RecordingPipeline};
 use crate::ts_file_pipeline_sink::TsFilePipelineSink;
 use crate::v4l2_pipeline_source::V4l2PipelineSource;
+use crate::libcamera_pipeline_source::LibcameraPipelineSource;
 use crate::{constants::*};
 
 pub struct CamService {
