@@ -178,16 +178,8 @@ impl RecordingPipeline {
         }
 
         let bus = pipeline.bus().expect("Pipeline has no bus");
-        loop {
-            if !Self::handle_gstreamer_bus_message(&bus) {
-                break;
-            }
-
-            // if !pipeline_running.load(Ordering::SeqCst) {
-            //     info!("Running flag set to false, exiting pipeline loop");
-            //     break;
-            // }
-        }
+        
+        while Self::handle_gstreamer_bus_message(&bus) {}
 
         pipeline_running.store(false, Ordering::SeqCst);
         info!("Pipeline thread exiting");

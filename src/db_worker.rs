@@ -36,8 +36,8 @@ impl DBWorker {
 
 pub fn start_db_worker(dbworker: DBWorker) -> JoinHandle<()> {
     let thread = std::thread::spawn(move || {
-        while let Ok(dbMessage) = dbworker.recvr.recv() {
-            match dbMessage {
+        while let Ok(db_message) = dbworker.recvr.recv() {
+            match db_message {
                 DBMessage::SegmentUpdate(segment_index) => {
                     trace!("DB Worker received segment_index={}", segment_index);
 

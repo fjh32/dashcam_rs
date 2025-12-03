@@ -23,7 +23,6 @@ pub struct CamService {
     pub running: Arc<AtomicBool>,
     pub recording_dir: String,
     pub recording_save_dir: String,
-    // pub db: DashcamDb
     pub db_worker_handle: Option<JoinHandle<()>>,
     pub db_sender_channel: Arc<Sender<DBMessage>>
 }
@@ -35,7 +34,6 @@ impl CamService {
         let recording_dir = RECORDING_DIR.to_string();
         let recording_save_dir = RECORDING_SAVE_DIR.to_string();
 
-        // Configure RecordingPipeline Settings
         let config = RecordingConfig {
             recording_dir: recording_dir.clone(),
             video_duration: VIDEO_DURATION,
@@ -55,24 +53,21 @@ impl CamService {
         let pipeline_arc = Arc::new(Mutex::new(pipeline));
 
         #[cfg(not(feature = "rpi"))]
-        let (source, ts_sink, hls_sink) = {
+        let source = {
             info!("V4L2 MODE CamService");
-            let source = Box::new(V4l2PipelineSource::new(config.clone()));
-            // let ts_sink = Box::new(TsFilePipelineSink::new(config.clone(), SEGMENTS_TO_KEEP)?);
-            let ts_sink = Box::new(TsFilePipelineSink::new_with_existing_dbworker(config.clone(), SEGMENTS_TO_KEEP, dbsender.clone())?);
-            let hls_sink = Box::new(HlsPipelineSink::new(config.clone()));
-            (source, ts_sink, hls_sink)
+            Box::new(V4l2PipelineSource::new(config.clone()))
         };
 
         #[cfg(feature = "rpi")]
-        let (source, ts_sink, hls_sink) = {
-            info!("RPI MODE CamService");
-            let source = Box::new(LibcameraPipelineSource::new(config.clone()));
+        let source = {
+            info!("Libcamera MODE CamService");
+            Box::new(LibcameraPipelineSource::new(config.clone()))
+        };
+
+        {
             let ts_sink = Box::new(TsFilePipelineSink::new_with_existing_dbworker(config.clone(), SEGMENTS_TO_KEEP, dbsender.clone())?);
             let hls_sink = Box::new(HlsPipelineSink::new(config.clone()));
-            (source, ts_sink, hls_sink)
-        };
-        {
+
             let mut pipeline = pipeline_arc.lock().unwrap();
             pipeline.set_source(source);
             pipeline.add_sink(ts_sink);
