@@ -43,20 +43,20 @@ pub fn start_db_worker(dbworker: DBWorker) -> JoinHandle<()> {
 
                     if let Err(e) = dbworker
                         .dbconn
-                        .update_segment_counters_from_index(segment_index)
+                        .update_segment_counters_from_index(1, segment_index)
                     {
                         error!("DB Worker failed to update segment counters: {:#}", e);
                     }
                 },
                 DBMessage::GetSegmentIndex { reply } => {
-                    let segment_index = match dbworker.dbconn.get_segment_index() {
+                    let segment_index = match dbworker.dbconn.get_segment_index(1) {
                         Ok(val) => val,
                         Err(_) => 0,
                     };
                     let _ = reply.send(segment_index);
                 },
                 DBMessage::CreateNewTrip => {
-                    let _ = dbworker.dbconn.new_trip();
+                    let _ = dbworker.dbconn.new_trip(1);
                 },
                 DBMessage::GetMostRecentTrip { reply } => {
                     info!("TODO implement")

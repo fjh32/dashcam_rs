@@ -47,7 +47,7 @@ impl TsFilePipelineSink {
         let db_worker = DBWorker::new(recvr)?;
 
         // TODO load this from DB, track it in our variable, call updates to it in db from our variable over channel
-        let segment_index = match db_worker.dbconn.get_segment_index() {
+        let segment_index = match db_worker.dbconn.get_segment_index(1) {
             Ok(val) => val,
             Err(_) => 0,
         };
