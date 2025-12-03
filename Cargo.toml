@@ -11,9 +11,11 @@ gstreamer = "0.24.2"
 gstreamer-video = "0.24.2"
 regex = "1.12.2"
 rusqlite = { version = "0.37.0", features = ["bundled", "unlock_notify"] }
+serde = { version = "1.0.228" , features = ["derive"] }
 signal-hook = "0.3.18"
 thiserror = "2.0.17"
 tokio = "1.48.0"
+toml = "0.9.8"
 tracing = "0.1.41"
 tracing-subscriber = "0.3.20"
 

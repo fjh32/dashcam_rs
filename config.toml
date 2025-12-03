@@ -1,0 +1,30 @@
+[global]
+main_dir       = "/var/lib/dashcam/"
+recording_root = "/var/lib/dashcam/recordings/"
+db_path        = "/var/lib/dashcam/dashcam.db"
+schema_path    = "/var/lib/dashcam/0001_init.sql"
+log_level      = "info"
+
+video_width          = 640
+video_height         = 480
+video_framerate      = 10
+
+############ CAM 0 #####################################
+[[cameras]]
+key      = "dashcam"
+name     = "Dashcam Front"
+enabled  = true
+role     = "dashcam"
+
+[cameras.source]
+kind = "libcamera"
+
+[[cameras.sinks]]
+kind                 = "dashcam_ts"
+segment_duration_sec = 2
+max_segments         = 86400
+
+[[cameras.sinks]]
+kind                 = "hls"
+segment_duration_sec = 2
+######## END CAM 0 #####################################

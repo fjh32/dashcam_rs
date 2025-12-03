@@ -13,6 +13,9 @@ mod log;
 mod recording_pipeline;
 mod ts_file_pipeline_sink;
 mod v4l2_pipeline_source;
+mod config;
+mod utils;
+mod recording_pipeline_factory;
 
 use cam_service::CamService;
 
