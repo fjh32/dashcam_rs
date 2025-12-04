@@ -28,7 +28,7 @@ fn main() -> Result<()> {
 
     let cfg = load_app_config()?;
 
-    let mut cam_service = CamService::new(&cfg)?;
+    let mut cam_service = CamService::new(cfg)?;
 
     let running = cam_service.running.clone();
     let mut signals = Signals::new(&[SIGINT, SIGTERM, SIGQUIT, SIGHUP])?;

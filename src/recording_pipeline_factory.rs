@@ -55,13 +55,13 @@ fn build_recording_config(global: &GlobalConfig, cam: &CameraConfig) -> Recordin
     dir.push(&cam.key);
     cfg.recording_dir = dir.to_string_lossy().to_string();
 
-    if let Some(w) = global.video_width {
+    if let Some(w) = cam.video_width {
         cfg.video_width = w as i32;
     }
-    if let Some(h) = global.video_height {
+    if let Some(h) = cam.video_height {
         cfg.video_height = h as i32;
     }
-    if let Some(fps) = global.video_framerate {
+    if let Some(fps) = cam.video_framerate {
         cfg.frame_rate = fps as i32;
     }
 

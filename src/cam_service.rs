@@ -1,6 +1,8 @@
 use anyhow::{Context, Result};
+use regex::Regex;
 use crate::db::db::{DashcamDb };
 use crate::db::db_worker::{DBMessage,DBWorker,start_db_worker};
+use std::fs;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Sender, channel};
 use std::sync::{Arc, Mutex};
@@ -16,23 +18,24 @@ pub struct CamService {
     pub running: Arc<AtomicBool>,
     pub db_worker_handle: Option<JoinHandle<()>>,
     pub db_sender: Arc<Sender<DBMessage>>,
+    pub app_config: AppConfig
 }
 
 impl CamService {
     /// Construct CamService from AppConfig:
     /// - start DB worker thread
     /// - build one RecordingPipeline per enabled camera via factory
-    pub fn new(cfg: &AppConfig) -> Result<Self> {
+    pub fn new(cfg: AppConfig) -> Result<Self> {
         info!("Creating CamService");
 
         info!("Creating DB Worker...");
         let (dbsender, dbrecvr) = channel::<DBMessage>();
-        let db_worker = DBWorker::new(dbrecvr, cfg)?;
+        let db_worker = DBWorker::new(dbrecvr, &cfg)?;
         let dbhandle = start_db_worker(db_worker);
         let dbsender = Arc::new(dbsender);
 
         info!("Building pipelines from AppConfig via factory...");
-        let pipeline_vec = build_pipelines_from_config(cfg, dbsender.clone()).with_context(|| {
+        let pipeline_vec = build_pipelines_from_config(&cfg, dbsender.clone()).with_context(|| {
             "CamService: build_pipelines_from_config() failed"
         })?;
         let pipelines: Vec<Arc<Mutex<RecordingPipeline>>> =
@@ -43,7 +46,10 @@ impl CamService {
             running: Arc::new(AtomicBool::new(false)),
             db_worker_handle: Some(dbhandle),
             db_sender: dbsender,
+            app_config: cfg
         };
+
+        service.prep_dir_for_service()?;
 
         Ok(service)
     }
@@ -91,6 +97,34 @@ impl CamService {
             "Killed CamService at {}",
             chrono::Local::now().format("%m-%d-%Y %H:%M:%S")
         );
+        Ok(())
+    }
+
+    fn prep_dir_for_service(&self) -> Result<()> {
+        // Create directories
+        fs::create_dir_all(&self.app_config.global.recording_root)?;
+
+        // Delete any segment*.ts or livestream.m3u8
+        let segment_regex = Regex::new(r"segment\d*\.ts")?;
+
+        for entry in fs::read_dir(&self.app_config.global.recording_root)? {
+            let entry = entry?;
+            if entry.file_type()?.is_dir() {
+                for dir in fs::read_dir(entry.path())? {
+                    let dir = dir?;
+                    let filename = dir.file_name();
+                    let filename_str = filename.to_string_lossy();
+
+                    if dir.file_type()?.is_file()
+                        && (filename_str.contains("livestream.m3u8")
+                            || segment_regex.is_match(&filename_str))
+                    {
+                        fs::remove_file(dir.path())?;
+                    }
+                }
+            }
+        }
+
         Ok(())
     }
 }

@@ -21,6 +21,9 @@ fn make_test_camera(
         name: format!("Camera {}", key),
         enabled: true,
         role: CameraRole::Dashcam,
+        video_width: None,
+        video_height: None,
+        video_framerate: None,
         source: SourceConfig {
             kind: SourceKind::V4l2,
             rtsp_url: None,
@@ -42,10 +45,7 @@ fn make_test_app_config(db_path: &str, schema_path: &str) -> AppConfig {
             recording_root: "./recordings".to_string(),
             db_path: db_path.to_string(),
             schema_path: schema_path.to_string(),
-            log_level: None,
-            video_width: None,
-            video_height: None,
-            video_framerate: None,
+            log_level: None
         },
         cameras: vec![make_test_camera("cam1", 0, 2, 10)],
     }

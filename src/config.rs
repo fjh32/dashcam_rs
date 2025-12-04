@@ -14,9 +14,7 @@ pub struct GlobalConfig {
     pub schema_path: String,
     pub log_level: Option<String>,
 
-    pub video_width: Option<i64>,
-    pub video_height: Option<i64>,
-    pub video_framerate: Option<i64>
+    
 }
 
 #[derive(Debug, Deserialize)]
@@ -25,6 +23,9 @@ pub struct CameraConfig {
     pub name: String,
     pub enabled: bool,
     pub role: CameraRole,
+    pub video_width: Option<i64>,
+    pub video_height: Option<i64>,
+    pub video_framerate: Option<i64>,
 
     pub source: SourceConfig,
     pub sinks: Vec<SinkConfig>,
