@@ -1,14 +1,4 @@
 
-
-
-
-
-pub const SOCKET_PATH: &str = "/tmp/dashcam.sock";
-
-pub const MAIN_DIR: &str = "/var/lib/dashcam/";
-pub const DB_PATH: &str = "/var/lib/dashcam/dashcam.db";
-pub const SCHEMA_PATH: &str = "/var/lib/dashcam/0001_init.sql";
-
 // DEBUG
 #[cfg(debug_assertions)]
 pub const VIDEO_DURATION: u64 = 2;

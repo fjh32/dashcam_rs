@@ -7,21 +7,9 @@ use std::sync::{Arc, Mutex};
 use tracing::info;
 
 use crate::constants::*;
+use crate::pipeline_sinks::pipeline_sink::PipelineSink;
+use crate::pipeline_sources::pipeline_source::PipelineSource;
 
-/////////////////////// Traits ////////////////////////
-pub trait PipelineSource: Send {
-    fn setup_source(&mut self, pipeline: &gst::Pipeline) -> Result<()>;
-    fn get_tee(&self) -> Result<gst::Element>;
-    fn get_source_pad(&self) -> Result<gst::Pad>;
-}
-
-pub trait PipelineSink: Send {
-    fn setup_sink(&mut self, pipeline: &gst::Pipeline) -> Result<()>;
-    fn get_sink_pad(&self) -> Result<gst::Pad>;
-    fn get_sink_element(&self) -> Result<gst::Element>;
-}
-
-////////////////////////////////////////////////////////////
 #[derive(Clone)]
 pub struct RecordingConfig {
     pub recording_dir: String,

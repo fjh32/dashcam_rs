@@ -5,9 +5,9 @@ db_path        = "/var/lib/dashcam/dashcam.db"
 schema_path    = "/var/lib/dashcam/0001_init.sql"
 log_level      = "info"
 
-video_width          = 640
-video_height         = 480
-video_framerate      = 10
+video_width          = 1920
+video_height         = 1080
+video_framerate      = 30
 
 ############ CAM 0 #####################################
 [[cameras]]

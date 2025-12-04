@@ -4,7 +4,8 @@ use gstreamer as gst;
 use gstreamer::prelude::*;
 use tracing::info;
 
-use crate::recording_pipeline::{PipelineSource, RecordingConfig};
+use crate::recording_pipeline::{ RecordingConfig};
+use super::pipeline_source::PipelineSource;
 
 ///
 /// def

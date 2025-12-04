@@ -1,4 +1,4 @@
-use crate::recording_pipeline::{PipelineSink, RecordingConfig};
+use crate::recording_pipeline::{ RecordingConfig};
 use anyhow::{Context, Result};
 use gstreamer as gst;
 use gstreamer::prelude::*;
@@ -10,6 +10,7 @@ use std::sync::mpsc::{Sender, channel};
 use std::thread::JoinHandle;
 use crate::db::db::{DashcamDb };
 use crate::db::db_worker::{DBMessage,DBWorker,start_db_worker};
+use super::pipeline_sink::PipelineSink;
 
 pub struct TsFilePipelineSink {
     config: RecordingConfig,

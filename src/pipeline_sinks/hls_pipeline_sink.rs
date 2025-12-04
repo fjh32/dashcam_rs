@@ -1,8 +1,9 @@
-use crate::recording_pipeline::{PipelineSink, RecordingConfig};
+use crate::recording_pipeline::{ RecordingConfig};
 use anyhow::{Context, Result};
 use gstreamer as gst;
 use gstreamer::prelude::*;
 use tracing::info;
+use super::pipeline_sink::PipelineSink;
 
 pub struct HlsPipelineSink {
     config: RecordingConfig,

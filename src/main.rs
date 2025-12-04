@@ -4,7 +4,6 @@ use signal_hook::iterator::Signals;
 use std::fs;
 use tracing::info;
 
-// pull things from the library crate
 use dashcam_rs::cam_service::CamService;
 use dashcam_rs::config::AppConfig;
 use dashcam_rs::log;
