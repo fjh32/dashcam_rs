@@ -56,7 +56,7 @@ pub enum SourceKind {
 #[derive(Debug, Deserialize)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum SinkConfig {
-    DashcamTs { max_segments: i64, segment_duration_sec: u64 },
-    NvrTs { segment_duration_sec: u64 },
-    Hls { segment_duration_sec: u64 },
+    DashcamTs { max_segments: i64, segment_duration_sec: u64 , sink_id: i64},
+    NvrTs { segment_duration_sec: u64 , sink_id: i64},
+    Hls { segment_duration_sec: u64 , sink_id: i64},
 }

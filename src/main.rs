@@ -4,23 +4,10 @@ use signal_hook::iterator::Signals;
 use std::fs;
 use tracing::info;
 
-mod cam_service;
-mod constants;
-mod config;
-mod utils;
-mod db;
-mod db_worker;
-mod hls_pipeline_sink;
-mod libcamera_pipeline_source;
-mod log;
-mod recording_pipeline;
-mod ts_file_pipeline_sink;
-mod v4l2_pipeline_source;
-
-mod recording_pipeline_factory;
-
-use cam_service::CamService;
-use config::AppConfig;
+// pull things from the library crate
+use dashcam_rs::cam_service::CamService;
+use dashcam_rs::config::AppConfig;
+use dashcam_rs::log;
 
 pub const CONFIG_PATH: &str = "/var/lib/dashcam/config.toml";
 

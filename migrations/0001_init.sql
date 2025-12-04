@@ -24,12 +24,15 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_cameras_key ON cameras(key);
 ----------------------------------------------------------------------
 
 CREATE TABLE IF NOT EXISTS camera_state (
-  camera_id          INTEGER PRIMARY KEY,
-  segment_index      INTEGER NOT NULL,  -- current ring index (0..N-1)
-  segment_generation INTEGER NOT NULL,  -- how many times ring wrapped
-  absolute_segments  INTEGER NOT NULL,  -- total segments ever finalized
+  camera_id          INTEGER NOT NULL,
+  sink_id            INTEGER NOT NULL,
+  segment_index      INTEGER NOT NULL,
+  segment_generation INTEGER NOT NULL,
+  absolute_segments  INTEGER NOT NULL,
+  PRIMARY KEY (camera_id, sink_id),
   FOREIGN KEY(camera_id) REFERENCES cameras(id) ON DELETE CASCADE
 );
+
 
 ----------------------------------------------------------------------
 -- Generic counters (KV) for other global integer settings if needed.

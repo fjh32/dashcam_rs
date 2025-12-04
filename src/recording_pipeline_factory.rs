@@ -1,16 +1,17 @@
 use anyhow::{anyhow, Result};
+use crate::db::db::{DashcamDb };
+use crate::db::db_worker::{DBMessage,DBWorker,start_db_worker};
+use crate::pipeline_sinks::hls_pipeline_sink::HlsPipelineSink;
+use crate::pipeline_sinks::ts_file_pipeline_sink::TsFilePipelineSink;
+use crate::pipeline_sources::v4l2_pipeline_source::V4l2PipelineSource;
+use crate::pipeline_sources::libcamera_pipeline_source::LibcameraPipelineSource;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::mpsc;
 use std::sync::mpsc::Sender;
 
 use crate::config::{AppConfig, CameraConfig, GlobalConfig, SourceKind, SinkConfig, CameraRole};
-use crate::db_worker::DBMessage;
 use crate::recording_pipeline::{RecordingConfig, RecordingPipeline, PipelineSource, PipelineSink};
-use crate::libcamera_pipeline_source::LibcameraPipelineSource;
-use crate::v4l2_pipeline_source::V4l2PipelineSource;
-use crate::ts_file_pipeline_sink::TsFilePipelineSink;
-use crate::hls_pipeline_sink::HlsPipelineSink;
 use crate::constants::*;
 
 
@@ -74,7 +75,7 @@ fn build_recording_config(global: &GlobalConfig, cam: &CameraConfig) -> Recordin
     }) {
         cfg.video_duration = dash_ts;
     } else if let Some(nvr_ts) = cam.sinks.iter().find_map(|s| {
-        if let SinkConfig::NvrTs { segment_duration_sec } = s {
+        if let SinkConfig::NvrTs { segment_duration_sec, .. } = s {
             Some(*segment_duration_sec)
         } else {
             None
@@ -82,7 +83,7 @@ fn build_recording_config(global: &GlobalConfig, cam: &CameraConfig) -> Recordin
     }) {
         cfg.video_duration = nvr_ts;
     } else if let Some(hls) = cam.sinks.iter().find_map(|s| {
-        if let SinkConfig::Hls { segment_duration_sec } = s {
+        if let SinkConfig::Hls { segment_duration_sec, .. } = s {
             Some(*segment_duration_sec)
         } else {
             None
@@ -131,23 +132,25 @@ fn build_sinks_for_camera(
             SinkConfig::DashcamTs {
                 max_segments,
                 segment_duration_sec: _,
+                sink_id
             } => {
                 // TsFilePipelineSink now needs camera_id and max_segments
                 let ts_sink = TsFilePipelineSink::new(
                     rec_cfg.clone(),
                     camera_id,
+                    *sink_id,
                     *max_segments,
                     db_sender.clone(),
                 )?;
                 sinks.push(Box::new(ts_sink) as Box<dyn PipelineSink>);
             }
 
-            SinkConfig::Hls { segment_duration_sec: _ } => {
+            SinkConfig::Hls { segment_duration_sec: _ , sink_id: _} => {
                 let hls_sink = HlsPipelineSink::new(rec_cfg.clone());
                 sinks.push(Box::new(hls_sink) as Box<dyn PipelineSink>);
             }
 
-            SinkConfig::NvrTs { segment_duration_sec: _ } => {
+            SinkConfig::NvrTs { segment_duration_sec: _ , sink_id: _} => {
                 return Err(anyhow!("NvrTs sink not implemented yet"));
             }
         }

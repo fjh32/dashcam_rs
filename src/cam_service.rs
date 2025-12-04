@@ -1,4 +1,6 @@
 use anyhow::{Context, Result};
+use crate::db::db::{DashcamDb };
+use crate::db::db_worker::{DBMessage,DBWorker,start_db_worker};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Sender, channel};
 use std::sync::{Arc, Mutex};
@@ -6,10 +8,7 @@ use std::thread::JoinHandle;
 use tracing::{error, info};
 
 use crate::config::AppConfig;
-use crate::db::DashcamDb;
-use crate::db_worker::{DBMessage, DBWorker, start_db_worker};
 use crate::recording_pipeline::RecordingPipeline;
-// ⬇️ this is YOUR existing factory module
 use crate::recording_pipeline_factory::build_pipelines_from_config;
 
 pub struct CamService {

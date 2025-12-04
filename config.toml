@@ -20,11 +20,13 @@ role     = "dashcam"
 kind = "libcamera"
 
 [[cameras.sinks]]
+sink_id              = 0
 kind                 = "dashcamts"
 segment_duration_sec = 2
 max_segments         = 86400
 
 [[cameras.sinks]]
+sink_id              = 1
 kind                 = "hls"
 segment_duration_sec = 2
 ######## END CAM 0 #####################################

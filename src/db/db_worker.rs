@@ -5,21 +5,24 @@ use std::{
 };
 use tracing::{error, info, trace};
 
-use crate::config::AppConfig;
-use crate::db::{self, DashcamDb};
+use crate::{config::AppConfig, db::db::{self, DashcamDb}};
+// use crate::db::{self, DashcamDb};
 
 pub enum DBMessage {
     SegmentUpdate {
         camera_id: i64,
+        sink_id: i64,
         segment_index: i64,
         max_segments: i64,
     },
     GetSegmentIndex {
         camera_id: i64,
+        sink_id:i64,
         reply: Sender<i64>,
     },
     ClampSegmentIndex {
         camera_id: i64,
+        sink_id: i64,
         max_segments: i64,
     },
 
@@ -55,6 +58,7 @@ pub fn start_db_worker(dbworker: DBWorker) -> JoinHandle<()> {
 
                 DBMessage::SegmentUpdate {
                     camera_id,
+                    sink_id,
                     segment_index,
                     max_segments,
                 } => {
@@ -69,6 +73,7 @@ pub fn start_db_worker(dbworker: DBWorker) -> JoinHandle<()> {
                         .dbconn
                         .update_segment_counters(
                             camera_id,
+                            sink_id,
                             segment_index,
                             max_segments,
                         )
@@ -77,8 +82,8 @@ pub fn start_db_worker(dbworker: DBWorker) -> JoinHandle<()> {
                     }
                 },
 
-                DBMessage::GetSegmentIndex { camera_id, reply } => {
-                    let segment_index = match dbworker.dbconn.get_segment_index_by_id(camera_id) {
+                DBMessage::GetSegmentIndex { camera_id,  sink_id, reply } => {
+                    let segment_index = match dbworker.dbconn.get_segment_index(camera_id, sink_id) {
                         Ok(val) => val,
                         Err(e) => {
                             error!(
@@ -93,6 +98,7 @@ pub fn start_db_worker(dbworker: DBWorker) -> JoinHandle<()> {
 
                 DBMessage::ClampSegmentIndex {
                     camera_id,
+                    sink_id,
                     max_segments,
                 } => {
                     info!(
@@ -101,7 +107,7 @@ pub fn start_db_worker(dbworker: DBWorker) -> JoinHandle<()> {
                     );
                     if let Err(e) = dbworker
                         .dbconn
-                        .clamp_segment_index_by_id(camera_id, max_segments)
+                        .clamp_segment_index(camera_id, sink_id, max_segments)
                     {
                         error!("DB Worker failed to clamp segment index: {:#}", e);
                     }

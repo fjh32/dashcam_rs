@@ -1,4 +1,4 @@
-use crate::config::{AppConfig, CameraConfig};
+use crate::config::{AppConfig, CameraConfig, SinkConfig};
 
 use anyhow::{Context, Result};
 use rusqlite::{params, Connection};
@@ -85,35 +85,53 @@ impl DashcamDb {
     // Camera + camera_state initialization
     ////////////////////////////////////////////////////////////////////////////////
 
-    /// Ensure every camera from the config exists in `cameras` and has a `camera_state` row.
+    /// Ensure every camera from the config exists in `cameras` and that
+    /// each DashcamTs sink has a corresponding row in `camera_state`.
     ///
-    /// - Inserts new cameras (key, name, rtsp_url).
-    /// - Updates name/rtsp_url for existing keys.
-    /// - Ensures camera_state rows are present with default counters (0,0,0).
-    fn ensure_cameras_initialized(&self, cameras: &[CameraConfig]) -> rusqlite::Result<()> {
+    /// - Inserts/updates cameras (key, name, rtsp_url).
+    /// - For each DashcamTs sink, inserts a (camera_id, sink_id) row into camera_state.
+    pub fn ensure_cameras_initialized(
+        &self,
+        cameras: &[CameraConfig],
+    ) -> rusqlite::Result<()> {
         for cam in cameras {
             let rtsp_url = cam.source.rtsp_url.as_deref();
 
-            // Insert or update camera row.
+            // Upsert camera row
             self.conn.execute(
                 "INSERT INTO cameras (key, name, rtsp_url)
                  VALUES (?1, ?2, ?3)
                  ON CONFLICT(key) DO UPDATE SET
                     name     = excluded.name,
-                    rtsp_url = COALESCE(excluded.rtsp_url, rtsp_url);",
-                params![cam.key, cam.name, rtsp_url],
+                    rtsp_url = COALESCE(excluded.rtsp_url, cameras.rtsp_url);",
+                rusqlite::params![cam.key, cam.name, rtsp_url],
             )?;
 
-            // Ensure camera_state row exists for this camera.
-            self.conn.execute(
-                "INSERT INTO camera_state (camera_id, segment_index, segment_generation, absolute_segments)
-                 VALUES (
-                    (SELECT id FROM cameras WHERE key = ?1),
-                    0, 0, 0
-                 )
-                 ON CONFLICT(camera_id) DO NOTHING;",
-                params![cam.key],
-            )?;
+            // For each DashcamTs sink, ensure a camera_state row exists
+            for sink in &cam.sinks {
+                if let SinkConfig::DashcamTs {
+                    sink_id,
+                    ..
+                } = sink
+                {
+                    self.conn.execute(
+                        "INSERT INTO camera_state (
+                             camera_id,
+                             sink_id,
+                             segment_index,
+                             segment_generation,
+                             absolute_segments
+                         )
+                         VALUES (
+                             (SELECT id FROM cameras WHERE key = ?1),
+                             ?2,
+                             0, 0, 0
+                         )
+                         ON CONFLICT(camera_id, sink_id) DO NOTHING;",
+                        rusqlite::params![cam.key, sink_id],
+                    )?;
+                }
+            }
         }
 
         Ok(())
@@ -134,83 +152,101 @@ impl DashcamDb {
     // Segment counters API (ID-based, hot path)
     ////////////////////////////////////////////////////////////////////////////////
 
-    pub fn get_segment_index_by_id(&self, camera_id: i64) -> rusqlite::Result<i64> {
+    pub fn get_segment_index(
+        &self,
+        camera_id: i64,
+        sink_id: i64,
+    ) -> rusqlite::Result<i64> {
         self.conn.query_row(
             "SELECT segment_index
              FROM camera_state
-             WHERE camera_id = ?1;",
-            params![camera_id],
+             WHERE camera_id = ?1 AND sink_id = ?2;",
+            params![camera_id, sink_id],
             |r| r.get(0),
         )
     }
 
-    pub fn get_segment_generation_by_id(&self, camera_id: i64) -> rusqlite::Result<i64> {
+    pub fn get_segment_generation(
+        &self,
+        camera_id: i64,
+        sink_id: i64,
+    ) -> rusqlite::Result<i64> {
         self.conn.query_row(
             "SELECT segment_generation
              FROM camera_state
-             WHERE camera_id = ?1;",
-            params![camera_id],
+             WHERE camera_id = ?1 AND sink_id = ?2;",
+            params![camera_id, sink_id],
             |r| r.get(0),
         )
     }
 
-    pub fn get_absolute_segments_by_id(&self, camera_id: i64) -> rusqlite::Result<i64> {
+    pub fn get_absolute_segments(
+        &self,
+        camera_id: i64,
+        sink_id: i64,
+    ) -> rusqlite::Result<i64> {
         self.conn.query_row(
             "SELECT absolute_segments
              FROM camera_state
-             WHERE camera_id = ?1;",
-            params![camera_id],
+             WHERE camera_id = ?1 AND sink_id = ?2;",
+            params![camera_id, sink_id],
             |r| r.get(0),
         )
     }
 
-    pub fn set_segment_index_by_id(
+    // ====== SETTERS for segment counters (camera_state) ======
+
+    pub fn set_segment_index(
         &self,
         camera_id: i64,
+        sink_id: i64,
         value: i64,
     ) -> rusqlite::Result<()> {
         self.conn.execute(
             "UPDATE camera_state
-             SET segment_index = ?
-             WHERE camera_id = ?;",
-            params![value, camera_id],
+             SET segment_index = ?1
+             WHERE camera_id = ?2 AND sink_id = ?3;",
+            params![value, camera_id, sink_id],
         )?;
         Ok(())
     }
 
-    pub fn set_segment_generation_by_id(
+    pub fn set_segment_generation(
         &self,
         camera_id: i64,
+        sink_id: i64,
         value: i64,
     ) -> rusqlite::Result<()> {
         self.conn.execute(
             "UPDATE camera_state
-             SET segment_generation = ?
-             WHERE camera_id = ?;",
-            params![value, camera_id],
+             SET segment_generation = ?1
+             WHERE camera_id = ?2 AND sink_id = ?3;",
+            params![value, camera_id, sink_id],
         )?;
         Ok(())
     }
 
-    pub fn set_absolute_segments_by_id(
+    pub fn set_absolute_segments(
         &self,
         camera_id: i64,
+        sink_id: i64,
         value: i64,
     ) -> rusqlite::Result<()> {
         self.conn.execute(
             "UPDATE camera_state
-             SET absolute_segments = ?
-             WHERE camera_id = ?;",
-            params![value, camera_id],
+             SET absolute_segments = ?1
+             WHERE camera_id = ?2 AND sink_id = ?3;",
+            params![value, camera_id, sink_id],
         )?;
         Ok(())
     }
 
     /// Update segment_index, segment_generation, and absolute_segments
-    /// for the given camera_id, based on a new ring index.
+    /// for the given (camera_id, sink_id) based on a new ring index.
     pub fn update_segment_counters(
         &self,
         camera_id: i64,
+        sink_id: i64,
         new_segment_index: i64,
         max_segments: i64,
     ) -> rusqlite::Result<()> {
@@ -219,11 +255,12 @@ impl DashcamDb {
         let (cur_idx, cur_gen, cur_abs): (i64, i64, i64) = tx.query_row(
             "SELECT segment_index, segment_generation, absolute_segments
              FROM camera_state
-             WHERE camera_id = ?1;",
-            params![camera_id],
+             WHERE camera_id = ?1 AND sink_id = ?2;",
+            rusqlite::params![camera_id, sink_id],
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         )?;
 
+        // If DB already matches, nothing to do.
         if new_segment_index == cur_idx {
             tx.commit()?;
             return Ok(());
@@ -232,44 +269,50 @@ impl DashcamDb {
         let max = max_segments;
         let wrapped = new_segment_index < cur_idx;
 
+        // How far did we advance around the ring?
         let diff = if wrapped {
             (max - cur_idx) + new_segment_index
         } else {
             new_segment_index - cur_idx
         };
 
+        // Update segment_index
         tx.execute(
             "UPDATE camera_state
-             SET segment_index = ?
-             WHERE camera_id = ?;",
-            params![new_segment_index, camera_id],
+             SET segment_index = ?1
+             WHERE camera_id = ?2 AND sink_id = ?3;",
+            rusqlite::params![new_segment_index, camera_id, sink_id],
         )?;
 
+        // Bump generation on wrap
         if wrapped {
             tx.execute(
                 "UPDATE camera_state
-                 SET segment_generation = ?
-                 WHERE camera_id = ?;",
-                params![cur_gen + 1, camera_id],
+                 SET segment_generation = ?1
+                 WHERE camera_id = ?2 AND sink_id = ?3;",
+                rusqlite::params![cur_gen + 1, camera_id, sink_id],
             )?;
         }
 
+        // absolute_segments always increases by `diff`
         tx.execute(
             "UPDATE camera_state
-             SET absolute_segments = ?
-             WHERE camera_id = ?;",
-            params![cur_abs + diff, camera_id],
+             SET absolute_segments = ?1
+             WHERE camera_id = ?2 AND sink_id = ?3;",
+            rusqlite::params![cur_abs + diff, camera_id, sink_id],
         )?;
 
         tx.commit()?;
         Ok(())
     }
 
+
     /// Increment ring index and bump generation/absolute atomically
-    /// for the given camera_id. Returns new ring index (post-increment).
+    /// for the given (camera_id, sink_id). Returns new ring index.
     pub fn increment_segment_index(
         &self,
         camera_id: i64,
+        sink_id: i64,
         max_segments: i64,
     ) -> rusqlite::Result<i64> {
         let tx = self.conn.unchecked_transaction()?;
@@ -277,8 +320,8 @@ impl DashcamDb {
         let (cur_idx, cur_gen, cur_abs): (i64, i64, i64) = tx.query_row(
             "SELECT segment_index, segment_generation, absolute_segments
              FROM camera_state
-             WHERE camera_id = ?1;",
-            params![camera_id],
+             WHERE camera_id = ?1 AND sink_id = ?2;",
+            params![camera_id, sink_id],
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         )?;
 
@@ -290,23 +333,25 @@ impl DashcamDb {
 
         tx.execute(
             "UPDATE camera_state
-             SET segment_index = ?
-             WHERE camera_id = ?;",
-            params![next_idx, camera_id],
+             SET segment_index = ?1
+             WHERE camera_id = ?2 AND sink_id = ?3;",
+            params![next_idx, camera_id, sink_id],
         )?;
+
         if wrapped {
             tx.execute(
                 "UPDATE camera_state
-                 SET segment_generation = ?
-                 WHERE camera_id = ?;",
-                params![next_gen, camera_id],
+                 SET segment_generation = ?1
+                 WHERE camera_id = ?2 AND sink_id = ?3;",
+                params![next_gen, camera_id, sink_id],
             )?;
         }
+
         tx.execute(
             "UPDATE camera_state
-             SET absolute_segments = ?
-             WHERE camera_id = ?;",
-            params![cur_abs + 1, camera_id],
+             SET absolute_segments = ?1
+             WHERE camera_id = ?2 AND sink_id = ?3;",
+            params![cur_abs + 1, camera_id, sink_id],
         )?;
 
         tx.commit()?;
@@ -317,26 +362,25 @@ impl DashcamDb {
     // Clamping helpers
     ////////////////////////////////////////////////////////////////////////////////
 
-    /// Clamp ring index for a single camera_id to `max_segments`.
-    pub fn clamp_segment_index_by_id(
+    /// Clamp ring index for a single (camera_id, sink_id) to `max_segments`.
+    pub fn clamp_segment_index(
         &self,
         camera_id: i64,
+        sink_id: i64,
         max_segments: i64,
     ) -> rusqlite::Result<()> {
         self.conn.execute(
             "UPDATE camera_state
              SET segment_index = segment_index % ?1
-             WHERE camera_id = ?2;",
-            params![max_segments, camera_id],
+             WHERE camera_id = ?2 AND sink_id = ?3;",
+            params![max_segments, camera_id, sink_id],
         )?;
         Ok(())
     }
 
-    /// Clamp ring index for all cameras.
-    pub fn clamp_all_segment_indices(
-        &self,
-        max_segments: i64,
-    ) -> rusqlite::Result<()> {
+    /// Clamp ring index for *all* camera_state rows (useful if sharing a global ring size).
+    /// If different sinks use different ring sizes, call `clamp_segment_index` per sink instead.
+    pub fn clamp_all_segment_indices(&self, max_segments: i64) -> rusqlite::Result<()> {
         self.conn.execute(
             "UPDATE camera_state
              SET segment_index = segment_index % ?1;",
