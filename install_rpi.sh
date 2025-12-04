@@ -14,9 +14,9 @@ cargo build --release --features rpi -j 1
 echo "📦 Installing systemd service..."
 sed "s|@USER@|$REAL_USER|g" dashcam_rs.service.template | sudo tee /etc/systemd/system/dashcam_rs.service > /dev/null
 
-echo "📦 Copying Database Stuff to $MAIN_DIR..."
+echo "📦 Copying Stuff to $MAIN_DIR..."
 cp migrations/* $MAIN_DIR
-
+cp config.toml $MAIN_DIR
 
 
 echo "📦 Stopping existing services..."

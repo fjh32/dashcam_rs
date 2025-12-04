@@ -20,7 +20,7 @@ role     = "dashcam"
 kind = "libcamera"
 
 [[cameras.sinks]]
-kind                 = "dashcam_ts"
+kind                 = "dashcamts"
 segment_duration_sec = 2
 max_segments         = 86400
 

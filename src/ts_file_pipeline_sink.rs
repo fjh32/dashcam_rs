@@ -15,6 +15,7 @@ pub struct TsFilePipelineSink {
     config: RecordingConfig,
     db_worker_handle: Option<JoinHandle<()>>,
     db_sender: Arc<Sender<DBMessage>>,
+    camera_id: i64,
     segment_index: Arc<AtomicI64>,
     max_segments: i64,
     queue: Option<gst::Element>,
@@ -23,41 +24,18 @@ pub struct TsFilePipelineSink {
 }
 
 impl TsFilePipelineSink {
-    pub fn new_with_existing_dbworker(config: RecordingConfig, max_segments: i64, db_sender: Arc<Sender<DBMessage>>) -> Result<Self> {
+    pub fn new(config: RecordingConfig, camera_id: i64, max_segments: i64, db_sender: Arc<Sender<DBMessage>>) -> Result<Self> {
+        //
         let (reply_tx, reply_rx) = mpsc::channel();
-        db_sender.send(DBMessage::GetSegmentIndex { reply: reply_tx })?;
+        db_sender.send(DBMessage::GetSegmentIndex { camera_id: camera_id, reply: reply_tx })?;
         let segment_index = reply_rx.recv()?;
-
+        //
+        
         Ok(TsFilePipelineSink {
             config,
             db_worker_handle: None,
             db_sender: db_sender,
-            segment_index: Arc::new(AtomicI64::new(segment_index)),
-            max_segments,
-            queue: None,
-            muxer: None,
-            sink: None,
-        })
-    }
-}
-
-impl TsFilePipelineSink {
-    pub fn new(config: RecordingConfig, max_segments: i64) -> Result<Self> {
-        let (sender, recvr) = channel::<DBMessage>();
-        let db_worker = DBWorker::new(recvr)?;
-
-        // TODO load this from DB, track it in our variable, call updates to it in db from our variable over channel
-        let segment_index = match db_worker.dbconn.get_segment_index(1) {
-            Ok(val) => val,
-            Err(_) => 0,
-        };
-
-        let handle = db_worker::start_db_worker(db_worker);
-
-        Ok(TsFilePipelineSink {
-            config,
-            db_worker_handle: Some(handle),
-            db_sender: Arc::new(sender),
+            camera_id,
             segment_index: Arc::new(AtomicI64::new(segment_index)),
             max_segments,
             queue: None,
@@ -113,6 +91,7 @@ impl PipelineSink for TsFilePipelineSink {
         sink.set_property("max-size-time", video_duration * 1_000_000_000u64);
 
         let config = self.config.clone();
+        let camera_id = self.camera_id;
         let segment_index = self.segment_index.clone();
         let max_segments = self.max_segments;
         let db_sender = self.db_sender.clone();
@@ -131,7 +110,11 @@ impl PipelineSink for TsFilePipelineSink {
             };
 
             segment_index.store(next_index, Ordering::SeqCst);
-            let _ = db_sender.send(DBMessage::SegmentUpdate(next_index));
+            let _ = db_sender.send(DBMessage::SegmentUpdate {
+                camera_id: camera_id,
+                segment_index: next_index,
+                max_segments: max_segments,
+            });
             
             Some(filename.to_value())
         });

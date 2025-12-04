@@ -1,6 +1,7 @@
 use anyhow::{anyhow, Result};
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::mpsc;
 use std::sync::mpsc::Sender;
 
 use crate::config::{AppConfig, CameraConfig, GlobalConfig, SourceKind, SinkConfig, CameraRole};
@@ -11,6 +12,33 @@ use crate::v4l2_pipeline_source::V4l2PipelineSource;
 use crate::ts_file_pipeline_sink::TsFilePipelineSink;
 use crate::hls_pipeline_sink::HlsPipelineSink;
 use crate::constants::*;
+
+
+fn get_camera_id_for_camera(
+    cam: &CameraConfig,
+    db_sender: &Arc<Sender<DBMessage>>,
+) -> Result<i64> {
+    let (tx, rx) = mpsc::channel();
+
+    db_sender.send(DBMessage::GetCameraIdByKey {
+        camera_key: cam.key.clone(),
+        reply: tx,
+    })?;
+
+    match rx.recv() {
+        Ok(Some(id)) => Ok(id),
+        Ok(None) => Err(anyhow!(
+            "DBWorker could not find camera_id for key '{}'",
+            cam.key
+        )),
+        Err(e) => Err(anyhow!(
+            "DBWorker channel closed while waiting for camera_id for key '{}': {}",
+            cam.key,
+            e
+        )),
+    }
+}
+
 
 /// Build a RecordingConfig for a specific camera.
 ///
@@ -88,13 +116,15 @@ fn build_source_for_camera(
     }
 }
 
-/// Build the sinks for a camera based on its sink configs.
 fn build_sinks_for_camera(
     cam: &CameraConfig,
     rec_cfg: &RecordingConfig,
-    db_sender: Sender<DBMessage>,
+    db_sender: Arc<Sender<DBMessage>>,
 ) -> Result<Vec<Box<dyn PipelineSink>>> {
     let mut sinks: Vec<Box<dyn PipelineSink>> = Vec::new();
+
+    // Resolve camera_id once per camera through DBWorker
+    let camera_id = get_camera_id_for_camera(cam, &db_sender)?;
 
     for sink_cfg in &cam.sinks {
         match sink_cfg {
@@ -102,28 +132,22 @@ fn build_sinks_for_camera(
                 max_segments,
                 segment_duration_sec: _,
             } => {
-                // For now, TsFilePipelineSink already uses RecordingConfig.video_duration
-                // for segment duration, and we pass per-sink ring size here.
-                let ts_sink = TsFilePipelineSink::new_with_existing_dbworker(
+                // TsFilePipelineSink now needs camera_id and max_segments
+                let ts_sink = TsFilePipelineSink::new(
                     rec_cfg.clone(),
+                    camera_id,
                     *max_segments,
-                    db_sender.clone().into(),
+                    db_sender.clone(),
                 )?;
                 sinks.push(Box::new(ts_sink) as Box<dyn PipelineSink>);
             }
 
             SinkConfig::Hls { segment_duration_sec: _ } => {
-                // Your HlsPipelineSink::new currently just takes RecordingConfig.
-                // If you later want different HLS segment durations per sink,
-                // you can add that parameter to the sink and pass segment_seconds here.
                 let hls_sink = HlsPipelineSink::new(rec_cfg.clone());
                 sinks.push(Box::new(hls_sink) as Box<dyn PipelineSink>);
             }
 
             SinkConfig::NvrTs { segment_duration_sec: _ } => {
-                // Placeholder for future NVR TS sink implementation.
-                // For now we can either ignore it or return an error.
-                // Let's return an error so we don't silently ignore config.
                 return Err(anyhow!("NvrTs sink not implemented yet"));
             }
         }
@@ -139,11 +163,12 @@ fn build_sinks_for_camera(
     Ok(sinks)
 }
 
+
 /// Build a single RecordingPipeline for a camera.
 pub fn build_pipeline_for_camera(
     global: &GlobalConfig,
     cam: &CameraConfig,
-    db_sender: Sender<DBMessage>,
+    db_sender: Arc<Sender<DBMessage>>,
 ) -> Result<RecordingPipeline> {
     if !cam.enabled {
         return Err(anyhow!("Camera '{}' is disabled", cam.key));
@@ -177,7 +202,7 @@ pub fn build_pipeline_for_camera(
 /// Helper: build all pipelines for all enabled cameras in AppConfig.
 pub fn build_pipelines_from_config(
     cfg: &AppConfig,
-    db_sender: Sender<DBMessage>,
+    db_sender: Arc<Sender<DBMessage>>,
 ) -> Result<Vec<RecordingPipeline>> {
     let mut pipelines = Vec::new();
 

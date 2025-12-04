@@ -1,3 +1,8 @@
+
+
+
+
+
 pub const SOCKET_PATH: &str = "/tmp/dashcam.sock";
 
 pub const MAIN_DIR: &str = "/var/lib/dashcam/";
