@@ -109,7 +109,7 @@ fn build_source_for_camera(
             Ok(Box::new(LibcameraPipelineSource::new(rec_cfg.clone())))
         }
         SourceKind::V4l2 => {
-            Ok(Box::new(V4l2PipelineSource::new(rec_cfg.clone())))
+            Ok(Box::new(V4l2PipelineSource::new(rec_cfg.clone(), cam.source.device.clone())))
         }
         SourceKind::Rtsp => {
             // TODO: implement an RtspPipelineSource

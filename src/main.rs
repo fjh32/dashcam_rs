@@ -1,11 +1,11 @@
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow};
 use signal_hook::consts::signal::*;
 use signal_hook::iterator::Signals;
 use std::fs;
 use tracing::info;
 
 use dashcam_rs::cam_service::CamService;
-use dashcam_rs::config::AppConfig;
+use dashcam_rs::config::{AppConfig, verify_app_config};
 use dashcam_rs::log;
 
 pub const CONFIG_PATH: &str = "/var/lib/dashcam/config.toml";
@@ -20,7 +20,11 @@ fn load_app_config() -> Result<AppConfig> {
     let cfg: AppConfig = toml::from_str(&contents)
         .with_context(|| format!("Failed to parse TOML config at '{}'", path))?;
 
-    Ok(cfg)
+    if verify_app_config(&cfg) {
+        Ok(cfg)
+    } else {
+        Err(anyhow!("Can't have more than 1 camera with the same source. Check your config.toml."))
+    }
 }
 
 fn main() -> Result<()> {
